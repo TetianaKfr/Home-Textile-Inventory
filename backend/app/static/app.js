@@ -346,6 +346,7 @@ async function itemFormView(id) {
         <p id="ai-note" class="small"></p>` : ""}
       ${field("Category", `<select name="category_id" id="category" required>${categories.map((c) => `<option value="${c.id}" ${String(selected) === String(c.id) ? "selected" : ""}>${esc(c.group_name)} — ${esc(c.name)}</option>`).join("")}</select>`)}
       ${field("Name", `<input name="name" required value="${esc(existing ? existing.name : "")}">`)}
+      ${locationFields(existing)}
       ${field("Dimensions", `<input name="dimension_text" placeholder="140 × 190" value="${existing && existing.width && existing.length ? `${existing.width} x ${existing.length}` : ""}">`)}
       <div id="extra-fields" class="filters"></div>
       ${field("Primary color", `<input name="primary_color" list="colors" value="${esc(existing ? existing.primary_color : "")}">`)}
@@ -359,7 +360,6 @@ async function itemFormView(id) {
       ${field("Notes", `<textarea name="notes">${esc(existing ? existing.notes : "")}</textarea>`)}
       ${existing ? "" : field("Quantity", `<input name="quantity" type="number" min="1" value="1">`)}
       ${existing ? "" : field("Status", `<select name="unit_status">${state.meta.statuses.map((s) => `<option>${esc(s)}</option>`).join("")}</select>`)}
-      ${existing ? "" : field("Location", `<select name="location_id"><option value="">No location yet</option>${locations.map((loc) => `<option value="${loc.id}">${esc(loc.label)}</option>`).join("")}</select>`)}
       <input type="hidden" name="version" value="${existing ? existing.version : 1}">
       <button class="btn" type="submit">${existing ? "Save changes" : "Save item"}</button>
       <p id="form-error" class="banner error" hidden></p>
@@ -369,6 +369,23 @@ async function itemFormView(id) {
     <datalist id="patterns">${state.meta.patterns.map((v) => `<option value="${esc(v)}">`).join("")}</datalist>
     <datalist id="materials">${state.meta.materials.map((v) => `<option value="${esc(v)}">`).join("")}</datalist>
     <datalist id="seasons">${state.meta.seasons.map((v) => `<option value="${esc(v)}">`).join("")}</datalist>`;
+}
+
+function locationOptions(selectedId) {
+  const locations = (window.__formCache && window.__formCache.locations) || [];
+  const selected = selectedId == null ? "" : String(selectedId);
+  return `<option value="">No location yet</option>${locations.map((loc) => `<option value="${loc.id}" ${String(loc.id) === selected ? "selected" : ""}>${esc(loc.label)}</option>`).join("")}`;
+}
+
+function locationFields(existing) {
+  const units = existing && existing.units ? existing.units : [];
+  if (!existing || units.length === 0) {
+    return field("Location", `<select name="location_id">${locationOptions("")}</select>`);
+  }
+  if (units.length === 1) {
+    return field("Location", `<select name="unit_location_${units[0].id}">${locationOptions(units[0].location_id)}</select>`);
+  }
+  return units.map((unit, index) => field(`Unit ${index + 1} location`, `<select name="unit_location_${unit.id}">${locationOptions(unit.location_id)}</select>`)).join("");
 }
 
 function flattenLocations(tree) {
@@ -709,6 +726,7 @@ async function saveItem(event, acknowledge) {
     const saved = existing
       ? await api("/api/items/" + existing.id, { method: "PATCH", body: payload })
       : await api("/api/items", { method: "POST", body: payload });
+    if (existing) await saveUnitLocations(form, existing);
     const file = document.getElementById("ai-file");
     if (file && file.files[0]) {
       const body = new FormData();
@@ -727,6 +745,20 @@ async function saveItem(event, acknowledge) {
     error.hidden = false;
     error.textContent = messageOf(err);
     if (err.status === 409 && err.detail && err.detail.item) go("#/items/" + err.detail.item.id + "/edit");
+  }
+}
+
+async function saveUnitLocations(form, existing) {
+  for (const unit of existing.units || []) {
+    const input = form.elements[`unit_location_${unit.id}`];
+    if (!input) continue;
+    const next = input.value ? Number(input.value) : null;
+    const previous = unit.location_id == null ? null : Number(unit.location_id);
+    if (next === previous) continue;
+    await api(`/api/units/${unit.id}`, {
+      method: "PATCH",
+      body: next == null ? { clear_location: true } : { location_id: next },
+    });
   }
 }
 

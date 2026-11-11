@@ -90,6 +90,7 @@ textarea { min-height: 80px; }
   align-items: center;
 }
 .btn.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+.filters > .btn { width: auto; justify-self: start; align-self: center; }
 .btn.warn { background: var(--bad); }
 .pill { border-radius: 999px; padding: 2px 8px; font-size: 12px; background: #efe6da; }
 .pill.exact, .pill.available { background: #e5f4ec; color: var(--ok); }
