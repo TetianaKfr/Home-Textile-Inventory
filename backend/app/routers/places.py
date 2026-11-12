@@ -136,8 +136,36 @@ def create_room(payload: RoomIn, ctx: Context = Depends(require_role("editor")))
 
 
 @router.delete("/rooms/{room_id}")
-def archive_room(room_id: int, ctx: Context = Depends(require_role("admin"))):
+def archive_room(room_id: int, ctx: Context = Depends(require_role("editor"))):
     room = _room(ctx, room_id)
+    locations = list(
+        ctx.db.scalars(
+            select(StorageLocation).where(
+                StorageLocation.room_id == room.id,
+                StorageLocation.archived.is_(False),
+            )
+        )
+    )
+    location_ids = [location.id for location in locations]
+    if location_ids:
+        in_use = ctx.db.scalar(
+            select(ItemUnit.id)
+            .join(Item)
+            .where(
+                ItemUnit.location_id.in_(location_ids),
+                ItemUnit.archived.is_(False),
+                Item.family_id == ctx.family.id,
+                Item.archived.is_(False),
+            )
+        )
+        if in_use:
+            raise HTTPException(status_code=409, detail="Move the items out of this room before deleting it")
+    for location in locations:
+        location.archived = True
+    for obj in ctx.db.scalars(
+        select(HouseholdObject).where(HouseholdObject.room_id == room.id, HouseholdObject.archived.is_(False))
+    ):
+        obj.room_id = None
     room.archived = True
     ctx.db.commit()
     return {"archived": room_id}
@@ -166,19 +194,22 @@ def create_storage(payload: StorageIn, ctx: Context = Depends(require_role("edit
 
 
 @router.delete("/storage/{location_id}")
-def archive_storage(location_id: int, ctx: Context = Depends(require_role("admin"))):
+def archive_storage(location_id: int, ctx: Context = Depends(require_role("editor"))):
     location = _location(ctx, location_id)
+    subtree = _subtree(ctx, location)
+    location_ids = [node.id for node in subtree]
     in_use = ctx.db.scalar(
         select(ItemUnit.id).join(Item).where(
-            ItemUnit.location_id == location.id,
+            ItemUnit.location_id.in_(location_ids),
             ItemUnit.archived.is_(False),
             Item.family_id == ctx.family.id,
             Item.archived.is_(False),
         )
     )
     if in_use:
-        raise HTTPException(status_code=409, detail="Move the items out of this location before archiving it")
-    location.archived = True
+        raise HTTPException(status_code=409, detail="Move the items out of this location before deleting it")
+    for node in subtree:
+        node.archived = True
     ctx.db.commit()
     return {"archived": location_id}
 
@@ -217,6 +248,8 @@ def storage_detail(location_id: int, ctx: Context = Depends(get_context)):
 @router.get("/storage/{location_id}/qr.png")
 def storage_qr(location_id: int, ctx: Context = Depends(get_context)):
     location = _location(ctx, location_id)
+    if location.location_type.strip().lower() != "box":
+        raise HTTPException(status_code=404, detail="QR codes are only available for boxes")
     url = f"{get_settings().public_base_url}/#/locations/{location.id}"
     image = qrcode.make(url)
     buffer = BytesIO()
@@ -243,6 +276,28 @@ def _location(ctx: Context, location_id: int) -> StorageLocation:
     if location is None or location.archived or location.family_id != ctx.family.id:
         raise HTTPException(status_code=404, detail="Location not found")
     return location
+
+
+def _subtree(ctx: Context, root: StorageLocation) -> list[StorageLocation]:
+    found: list[StorageLocation] = []
+    pending = [root]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if current.id in seen:
+            continue
+        seen.add(current.id)
+        found.append(current)
+        pending.extend(
+            ctx.db.scalars(
+                select(StorageLocation).where(
+                    StorageLocation.parent_id == current.id,
+                    StorageLocation.family_id == ctx.family.id,
+                    StorageLocation.archived.is_(False),
+                )
+            ).all()
+        )
+    return found
 
 
 @router.get("/objects")

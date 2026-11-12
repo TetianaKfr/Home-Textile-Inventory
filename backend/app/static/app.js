@@ -242,11 +242,27 @@ async function dashboardView() {
     ${cards(data.recent_items)}`;
 }
 
+function placeLabel(unit) {
+  if (!unit || unit.location_id == null) return unit && unit.location_path ? unit.location_path : "No location";
+  if (unit.home_name || unit.room_name || unit.location_name) {
+    return [unit.home_name, unit.room_name, unit.location_name].filter(Boolean).join(" / ");
+  }
+  return unit.location_path || "No location";
+}
+
+function placeDetails(unit) {
+  if (!unit || unit.location_id == null) return `<p>No location</p>`;
+  return `<p>Home: ${esc(unit.home_name || "—")}</p>
+    <p>Room: ${esc(unit.room_name || "—")}</p>
+    <p>Inside: ${esc(unit.inside || "—")}</p>
+    <p>Type: ${esc(unit.location_type || "—")}</p>`;
+}
+
 function cards(items) {
   if (!items.length) return `<p class="muted">Nothing here yet.</p>`;
   return `<div class="grid">${items.map((item) => {
     const photo = item.photos && item.photos[0];
-    const place = item.units && item.units[0] ? item.units[0].location_path : "No location";
+    const place = item.units && item.units[0] ? placeLabel(item.units[0]) : "No location";
     const status = item.units && item.units[0] ? item.units[0].status : "";
     return `<a class="card" href="#/items/${item.id}">
       ${photo ? `<img src="${photoUrl(photo.id)}" alt="">` : `<div class="ph">No photo</div>`}
@@ -318,7 +334,7 @@ async function itemDetailView(id) {
       <aside>
         <section class="panel">
           <h2>Physical units</h2>
-          ${item.units.map((unit) => `<div class="row" style="margin-bottom:8px"><span class="pill ${esc(unit.status)}">${esc(unit.status.replaceAll("_", " "))}</span><span class="small">${esc(unit.location_path)}</span></div>`).join("") || "<p>No units.</p>"}
+          ${item.units.map((unit) => `<div style="margin-bottom:10px"><span class="pill ${esc(unit.status)}">${esc(unit.status.replaceAll("_", " "))}</span>${placeDetails(unit)}</div>`).join("") || "<p>No units.</p>"}
           <p class="small muted">Quantity ${item.quantity}. Version ${item.version}.</p>
         </section>
         <section class="panel" style="margin-top:12px">
@@ -464,33 +480,77 @@ function collectItem(form, acknowledge) {
 
 async function locationsView() {
   const tree = await api("/api/locations/tree");
-  const homes = tree.homes.map((home) => `<section class="panel" style="margin-bottom:12px"><h2>${esc(home.name)}</h2>
-    ${home.rooms.map((room) => `<h3>${esc(room.name)}</h3>${renderTree(room.locations)}`).join("") || `<p class="muted">No rooms yet.</p>`}
-  </section>`).join("");
+  window.__placeTree = tree;
+  const homes = tree.homes.map(homeSection).join("");
   return `<div class="top"><h1>Homes and storage</h1></div>
     ${canEdit() ? `<form id="place-form" class="panel filters" style="margin-bottom:12px">
       ${field("Add", `<select name="kind"><option value="home">Home</option><option value="room">Room</option><option value="storage">Storage location</option></select>`)}
-      ${field("Name", `<input name="name" required placeholder="Box 4">`)}
-      ${field("Home id for a room", `<input name="home_id" placeholder="from the list below">`)}
-      ${field("Room id for storage", `<input name="room_id">`)}
-      ${field("Parent location id", `<input name="parent_id">`)}
-      ${field("Type", `<input name="location_type" placeholder="shelf, drawer, box, cupboard">`)}
-      <button class="btn" type="submit">Add</button>
+      ${field("Name", `<input name="name" required placeholder="Xavier, Saint-Malo">`)}
+      ${field("Home", `<select name="home_id"></select>`)}
+      ${field("Room", `<select name="room_id"></select>`)}
+      ${field("Inside", `<select name="parent_id"></select>`)}
+      ${field("Type", `<select name="location_type"><option value="shelf">shelf</option><option value="drawer">drawer</option><option value="box">box</option><option value="cupboard">cupboard</option></select>`)}
+      <button class="btn" type="submit" id="place-submit">Add home</button>
+      <p id="place-error" class="banner error" hidden></p>
     </form>` : ""}
+    <p id="homes-error" class="banner error" hidden></p>
     ${homes || "<p>No homes yet.</p>"}`;
+}
+
+function homeSection(home) {
+  const rooms = home.rooms.map((room) => `<h3>${esc(room.name)}</h3>${renderTree(room.locations)}`).join("") || `<p class="muted">No rooms yet.</p>`;
+  const actions = canEdit() ? `<div class="row">
+      <button class="btn secondary" type="button" data-edit-home="${home.id}">Edit</button>
+      ${canAdmin() ? `<button class="btn warn" type="button" data-delete-home="${home.id}" data-home-name="${esc(home.name)}">Delete</button>` : ""}
+    </div>` : "";
+  const roomDeletes = (home.rooms || []).map((room) => `<div class="room-block">
+      <div class="room-row">
+        <strong>${esc(room.name)}</strong>
+        <button class="btn warn" type="button" data-delete-room="${room.id}" data-room-name="${esc(room.name)}" data-home-id="${home.id}">Delete</button>
+      </div>
+      ${storageEditor(room.locations, home.id)}
+    </div>`).join("");
+  const editor = canEdit() ? `<div data-home-editor="${home.id}" hidden>
+      <form class="filters" data-home-form="${home.id}">
+        ${field("Home name", `<input name="name" required value="${esc(home.name)}">`)}
+        <button class="btn" type="submit">Save</button>
+        <button class="btn secondary" type="button" data-cancel-home="${home.id}">Cancel</button>
+      </form>
+      <div class="room-editor">
+        <h3>Rooms</h3>
+        ${roomDeletes || `<p class="muted">No rooms yet.</p>`}
+        <p class="banner error" data-home-error="${home.id}" hidden></p>
+      </div>
+    </div>` : "";
+  return `<section class="panel" style="margin-bottom:12px">
+    <div class="top"><h2>${esc(home.name)}</h2>${actions}</div>
+    ${editor}
+    ${rooms}
+  </section>`;
+}
+
+function storageEditor(nodes, homeId) {
+  if (!nodes || !nodes.length) return `<p class="muted small">No storage in this room.</p>`;
+  return `<ul class="room-edit">${nodes.map((node) => `<li>
+      <div class="room-row">
+        <span class="storage-label">${esc(node.name)} <span class="muted small">${esc(node.location_type)}</span></span>
+        <button class="btn warn" type="button" data-delete-storage="${node.id}" data-storage-name="${esc(node.name)}" data-home-id="${homeId}">Delete</button>
+      </div>
+      ${node.children && node.children.length ? storageEditor(node.children, homeId) : ""}
+    </li>`).join("")}</ul>`;
 }
 
 function renderTree(nodes) {
   if (!nodes || !nodes.length) return "";
-  return `<ul>${nodes.map((node) => `<li><a href="#/locations/${node.id}">${esc(node.name)}</a> <span class="muted small">${esc(node.location_type)} · #${node.id}</span>${renderTree(node.children)}</li>`).join("")}</ul>`;
+  return `<ul>${nodes.map((node) => `<li><a href="#/locations/${node.id}">${esc(node.name)}</a> <span class="muted small">${esc(node.location_type)}</span>${renderTree(node.children)}</li>`).join("")}</ul>`;
 }
 
 async function locationDetailView(id) {
   const data = await api("/api/storage/" + id);
-  const qr = `/api/storage/${id}/qr.png`;
+  const isBox = String(data.type || "").toLowerCase() === "box";
   return `<div class="top"><h1>${esc(data.name)}</h1></div>
     <section class="panel"><p>${esc(data.path)}</p><p class="muted">${esc(data.type)}</p>
-    <img id="qr" alt="QR code for this location" style="width:180px;height:180px;background:#fff">
+    ${isBox ? `<img id="qr" alt="QR code for this box" style="width:180px;height:180px;background:#fff">` : ""}
     <h2>Items here</h2>
     ${data.items.map((item) => `<p><a href="#/items/${item.id}">${esc(item.name)}</a> · ${esc(item.category)} · ${item.quantity_here}</p>`).join("") || "<p>This location is empty.</p>"}
     </section>`;
@@ -567,7 +627,7 @@ async function setsView() {
     ${sets.map((set) => `<article class="panel" style="margin-bottom:12px">
       <h2>${esc(set.name)} ${set.needs_attention ? `<span class="pill possible">Needs attention</span>` : ""}</h2>
       <p class="muted">${esc(set.object_name || "No linked object")}</p>
-      ${set.items.map((item) => item.missing ? `<p>Missing item</p>` : `<p><a href="#/items/${item.id}">${esc(item.name)}</a> · ${(item.units[0] ? esc(item.units[0].location_path) : "")}</p>`).join("")}
+      ${set.items.map((item) => item.missing ? `<p>Missing item</p>` : `<p><a href="#/items/${item.id}">${esc(item.name)}</a> · ${(item.units[0] ? esc(placeLabel(item.units[0])) : "")}</p>`).join("")}
     </article>`).join("") || "<p>No saved sets yet. Save one from matching.</p>"}`;
 }
 
@@ -654,7 +714,70 @@ function bindPage(parts) {
   const itemForm = document.getElementById("item-form");
   if (itemForm) itemForm.onsubmit = (event) => saveItem(event, false);
   const placeForm = document.getElementById("place-form");
-  if (placeForm) placeForm.onsubmit = savePlace;
+  if (placeForm) {
+    placeForm.onsubmit = savePlace;
+    syncPlaceForm();
+    placeForm.elements.kind.onchange = syncPlaceForm;
+    placeForm.elements.home_id.onchange = syncPlaceForm;
+    placeForm.elements.room_id.onchange = syncPlaceForm;
+  }
+  document.querySelectorAll("[data-edit-home]").forEach((button) => {
+    button.onclick = () => {
+      const editor = document.querySelector(`[data-home-editor="${button.dataset.editHome}"]`);
+      if (editor) editor.hidden = !editor.hidden;
+    };
+  });
+  document.querySelectorAll("[data-cancel-home]").forEach((button) => {
+    button.onclick = () => {
+      const editor = document.querySelector(`[data-home-editor="${button.dataset.cancelHome}"]`);
+      if (editor) editor.hidden = true;
+    };
+  });
+  document.querySelectorAll("[data-delete-room]").forEach((button) => {
+    button.onclick = async () => {
+      if (!confirm(`Delete ${button.dataset.roomName}?`)) return;
+      try {
+        await api("/api/rooms/" + button.dataset.deleteRoom, { method: "DELETE" });
+        render();
+      } catch (err) {
+        showEditorError(button.dataset.homeId, err);
+      }
+    };
+  });
+  document.querySelectorAll("[data-delete-storage]").forEach((button) => {
+    button.onclick = async () => {
+      if (!confirm(`Delete ${button.dataset.storageName}?`)) return;
+      try {
+        await api("/api/storage/" + button.dataset.deleteStorage, { method: "DELETE" });
+        render();
+      } catch (err) {
+        showEditorError(button.dataset.homeId, err);
+      }
+    };
+  });
+  document.querySelectorAll("[data-home-form]").forEach((form) => {
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(form).entries());
+      try {
+        await api("/api/homes/" + form.dataset.homeForm, { method: "PATCH", body: { name: data.name } });
+        render();
+      } catch (err) {
+        showHomesError(err);
+      }
+    };
+  });
+  document.querySelectorAll("[data-delete-home]").forEach((button) => {
+    button.onclick = async () => {
+      if (!confirm(`Delete ${button.dataset.homeName}? Its rooms disappear from the list.`)) return;
+      try {
+        await api("/api/homes/" + button.dataset.deleteHome, { method: "DELETE" });
+        render();
+      } catch (err) {
+        showHomesError(err);
+      }
+    };
+  });
   const objectForm = document.getElementById("object-form");
   if (objectForm) objectForm.onsubmit = saveObject;
   const matchForm = document.getElementById("match-form");
@@ -762,14 +885,88 @@ async function saveUnitLocations(form, existing) {
   }
 }
 
+function placeChoices(tree, homeId, roomId) {
+  const homes = tree.homes || [];
+  const home = homes.find((item) => String(item.id) === String(homeId)) || homes[0];
+  const rooms = home ? home.rooms || [] : [];
+  const room = rooms.find((item) => String(item.id) === String(roomId)) || rooms[0];
+  const parents = [];
+  const walk = (nodes, prefix) => {
+    for (const node of nodes || []) {
+      const label = prefix ? `${prefix} / ${node.name}` : node.name;
+      parents.push({ id: node.id, label });
+      walk(node.children, label);
+    }
+  };
+  if (room) walk(room.locations, "");
+  return { homes, home, rooms, room, parents };
+}
+
+function fillSelect(select, options, selected, emptyLabel) {
+  const html = (emptyLabel ? `<option value="">${esc(emptyLabel)}</option>` : "") + options.map((option) => `<option value="${option.id}">${esc(option.label)}</option>`).join("");
+  select.innerHTML = html || `<option value="">${esc(emptyLabel || "Nothing to choose")}</option>`;
+  if ([...select.options].some((option) => option.value === String(selected ?? ""))) select.value = String(selected ?? "");
+}
+
+function syncPlaceForm() {
+  const form = document.getElementById("place-form");
+  const tree = window.__placeTree || { homes: [] };
+  if (!form) return;
+  const kind = form.elements.kind.value;
+  const choice = placeChoices(tree, form.elements.home_id.value, form.elements.room_id.value);
+  fillSelect(form.elements.home_id, choice.homes.map((home) => ({ id: home.id, label: home.name })), choice.home && choice.home.id);
+  fillSelect(form.elements.room_id, choice.rooms.map((room) => ({ id: room.id, label: room.name })), choice.room && choice.room.id);
+  fillSelect(form.elements.parent_id, choice.parents, form.elements.parent_id.value, "Directly in the room");
+  const show = (name, visible) => {
+    const label = form.elements[name].closest("label");
+    if (label) label.hidden = !visible;
+  };
+  show("home_id", kind !== "home");
+  show("room_id", kind === "storage");
+  show("parent_id", kind === "storage");
+  show("location_type", kind === "storage");
+  form.elements.name.placeholder = kind === "home" ? "Xavier, Saint-Malo" : kind === "room" ? "Bedroom" : "Box 4";
+  const submit = document.getElementById("place-submit");
+  if (submit) submit.textContent = kind === "home" ? "Add home" : kind === "room" ? "Add room" : "Add storage";
+}
+
+function showEditorError(homeId, err) {
+  const error = document.querySelector(`[data-home-error="${homeId}"]`);
+  if (!error) {
+    showHomesError(err);
+    return;
+  }
+  error.hidden = false;
+  error.textContent = messageOf(err);
+}
+
+function showHomesError(err) {
+  const error = document.getElementById("homes-error");
+  if (!error) return;
+  error.hidden = false;
+  error.textContent = messageOf(err);
+}
+
 async function savePlace(event) {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target).entries());
-  if (data.kind === "home") await api("/api/homes", { method: "POST", body: { name: data.name } });
-  else if (data.kind === "room") await api("/api/rooms", { method: "POST", body: { name: data.name, home_id: Number(data.home_id) } });
-  else await api("/api/storage", { method: "POST", body: { name: data.name, room_id: Number(data.room_id), parent_id: data.parent_id ? Number(data.parent_id) : null, location_type: data.location_type || "storage" } });
-  go("#/locations");
-  render();
+  const error = document.getElementById("place-error");
+  error.hidden = true;
+  try {
+    if (data.kind === "home") await api("/api/homes", { method: "POST", body: { name: data.name } });
+    else if (data.kind === "room") {
+      if (!data.home_id) throw new Error("Choose a home from the list first.");
+      await api("/api/rooms", { method: "POST", body: { name: data.name, home_id: Number(data.home_id) } });
+    } else {
+      if (!data.room_id) throw new Error("Choose a room from the list first.");
+      await api("/api/storage", { method: "POST", body: { name: data.name, room_id: Number(data.room_id), parent_id: data.parent_id ? Number(data.parent_id) : null, location_type: data.location_type || "shelf" } });
+    }
+    go("#/locations");
+    render();
+  } catch (err) {
+    error.hidden = false;
+    error.textContent = messageOf(err);
+  }
 }
 
 async function saveObject(event) {

@@ -22,13 +22,14 @@ def item_dict(item, path) -> dict:
     for unit in item.units:
         if unit.archived:
             continue
+        details = path.facts(unit.location_id) if getattr(path, "facts", None) else {"location_path": path(unit.location_id)}
         units.append(
             {
                 "id": unit.id,
                 "status": unit.status,
                 "notes": unit.notes,
                 "location_id": unit.location_id,
-                "location_path": path(unit.location_id),
+                **details,
             }
         )
     photos = [

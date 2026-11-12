@@ -24,20 +24,41 @@ def location_catalog(db: Session, family_id: int):
     room_by = {room.id: room for room in rooms}
     loc_by = {loc.id: loc for loc in locations}
 
-    def path(location_id: int | None) -> str:
+    def facts(location_id: int | None) -> dict:
+        empty = {
+            "location_path": "No location",
+            "home_name": "",
+            "room_name": "",
+            "inside": "",
+            "location_type": "",
+            "location_name": "",
+        }
         if location_id is None or location_id not in loc_by:
-            return "No location"
+            return empty
         chain = []
         current = loc_by[location_id]
         seen = set()
         while current is not None and current.id not in seen:
             seen.add(current.id)
-            chain.append(current.name)
+            chain.append(current)
             current = loc_by.get(current.parent_id)
         chain.reverse()
-        room = room_by.get(loc_by[location_id].room_id)
+        room = room_by.get(chain[-1].room_id)
         home = home_by.get(room.home_id) if room else None
+        names = [node.name for node in chain]
         prefix = [part.name for part in (home, room) if part is not None]
-        return " / ".join(prefix + chain)
+        parents = names[:-1]
+        return {
+            "location_path": " / ".join(prefix + names),
+            "home_name": home.name if home else "",
+            "room_name": room.name if room else "",
+            "inside": " / ".join(parents) if parents else "Directly in the room",
+            "location_type": chain[-1].location_type,
+            "location_name": chain[-1].name,
+        }
 
+    def path(location_id: int | None) -> str:
+        return facts(location_id)["location_path"]
+
+    path.facts = facts
     return homes, rooms, locations, path
