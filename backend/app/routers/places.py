@@ -48,6 +48,26 @@ class ObjectIn(BaseModel):
     notes: str = ""
 
 
+_OBJECT_MEASURES = ("width", "length", "height", "diameter", "depth")
+_ATTRIBUTE_MEASURES = ("rail_width", "desired_length", "fullness", "overhang", "rail_to_floor", "panel_count")
+
+
+def _reject_negative(payload: ObjectIn) -> None:
+    for key in _OBJECT_MEASURES:
+        value = getattr(payload, key)
+        if value is not None and value < 0:
+            raise HTTPException(status_code=422, detail="Length and height cannot be negative. Enter the measurement.")
+    for key, value in (payload.attributes or {}).items():
+        if key not in _ATTRIBUTE_MEASURES or value is None or value == "":
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number < 0:
+            raise HTTPException(status_code=422, detail="Length and height cannot be negative. Enter the measurement.")
+
+
 def _tree(ctx: Context) -> dict:
     homes, rooms, locations, path = location_catalog(ctx.db, ctx.family.id)
     room_groups: dict[int, list] = {}
@@ -257,6 +277,15 @@ def storage_qr(location_id: int, ctx: Context = Depends(get_context)):
     return Response(content=buffer.getvalue(), media_type="image/png")
 
 
+def _check_object_place(ctx: Context, payload: ObjectIn) -> None:
+    home = _home(ctx, payload.home_id) if payload.home_id is not None else None
+    room = _room(ctx, payload.room_id) if payload.room_id is not None else None
+    if room is not None and home is None:
+        raise HTTPException(status_code=422, detail="Choose a home for this room")
+    if room is not None and home is not None and room.home_id != home.id:
+        raise HTTPException(status_code=422, detail="Choose a room from the selected home")
+
+
 def _home(ctx: Context, home_id: int) -> Home:
     home = ctx.db.get(Home, home_id)
     if home is None or home.archived or home.family_id != ctx.family.id:
@@ -318,11 +347,13 @@ def list_objects(kind: str = "", ctx: Context = Depends(get_context)):
 def create_object(payload: ObjectIn, ctx: Context = Depends(require_role("editor"))):
     if payload.kind not in {"bed", "mattress", "table", "window"}:
         raise HTTPException(status_code=422, detail="Unknown object type")
-    if payload.home_id is not None:
-        _home(ctx, payload.home_id)
-    if payload.room_id is not None:
-        _room(ctx, payload.room_id)
-    obj = HouseholdObject(family_id=ctx.family.id, **payload.model_dump())
+    _reject_negative(payload)
+    _check_object_place(ctx, payload)
+    data = payload.model_dump()
+    data["attributes"] = {
+        key: value for key, value in (data.get("attributes") or {}).items() if value is not None and value != ""
+    }
+    obj = HouseholdObject(family_id=ctx.family.id, **data)
     ctx.db.add(obj)
     add_audit(ctx.db, ctx.family.id, ctx.user.id, "object_created", {"kind": payload.kind, "name": payload.name})
     ctx.db.commit()
@@ -332,9 +363,22 @@ def create_object(payload: ObjectIn, ctx: Context = Depends(require_role("editor
 
 @router.patch("/objects/{object_id}")
 def update_object(object_id: int, payload: ObjectIn, ctx: Context = Depends(require_role("editor"))):
+    if payload.kind not in {"bed", "mattress", "table", "window"}:
+        raise HTTPException(status_code=422, detail="Unknown object type")
+    _reject_negative(payload)
+    _check_object_place(ctx, payload)
     obj = _object(ctx, object_id)
-    for key, value in payload.model_dump().items():
+    data = payload.model_dump()
+    incoming = data.pop("attributes") or {}
+    merged = dict(obj.attributes or {})
+    for key, value in incoming.items():
+        if value is None or value == "":
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+    for key, value in data.items():
         setattr(obj, key, value)
+    obj.attributes = merged
     ctx.db.commit()
     return object_dict(obj)
 

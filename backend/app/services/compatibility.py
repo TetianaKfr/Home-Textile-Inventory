@@ -3,7 +3,12 @@
 from dataclasses import dataclass, field
 
 from app.catalog import DEFAULT_PREFERENCES
-from app.services.dimensions import fmt_cm
+from app.services.dimensions import fmt_cm, usable_measure
+
+_MEASURE_KEYS = (
+    "width", "length", "height", "diameter", "depth", "overhang", "mattress_depth",
+    "rail_width", "fullness", "desired_length", "rail_to_floor", "panel_width", "panel_count",
+)
 
 RANK = {"exact": 3, "acceptable": 2, "possible": 1, "incompatible": 0}
 
@@ -34,19 +39,25 @@ def _prefs(overrides: dict | None) -> dict:
     merged = dict(DEFAULT_PREFERENCES)
     if overrides:
         for key, value in overrides.items():
-            if value is not None and key in merged:
-                merged[key] = value
+            if value is None or key not in merged:
+                continue
+            number = usable_measure(value)
+            if number is None:
+                continue
+            merged[key] = number
     return merged
 
 
 def _num(source: dict, key: str):
-    value = source.get(key)
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    return usable_measure(source.get(key))
+
+
+def _measures(source: dict | None) -> dict:
+    cleaned = dict(source or {})
+    for key in _MEASURE_KEYS:
+        if key in cleaned:
+            cleaned[key] = usable_measure(cleaned.get(key))
+    return cleaned
 
 
 def _status_for_delta(max_delta: float, exact_at: float, acceptable_at: float, possible_at: float) -> str:
@@ -98,6 +109,8 @@ def visual_score(color_a: str, pattern_a: str, color_b: str, pattern_b: str) -> 
 
 
 def match_fitted_sheet(mattress: dict, sheet: dict, preferences: dict | None = None) -> Verdict:
+    mattress = _measures(mattress)
+    sheet = _measures(sheet)
     prefs = _prefs(preferences)
     tol = float(prefs["size_tolerance_cm"])
     if _missing(mattress.get("width"), mattress.get("length"), sheet.get("width"), sheet.get("length")):
@@ -144,6 +157,8 @@ def match_fitted_sheet(mattress: dict, sheet: dict, preferences: dict | None = N
 
 
 def match_flat_sheet(mattress: dict, sheet: dict, preferences: dict | None = None, overhang_is_default: bool = True) -> Verdict:
+    mattress = _measures(mattress)
+    sheet = _measures(sheet)
     prefs = _prefs(preferences)
     if _missing(mattress.get("width"), mattress.get("length"), sheet.get("width"), sheet.get("length")):
         return Verdict("possible", 40, "Flat sheet or mattress dimensions are incomplete.", warnings=["Dimensions are missing."])
@@ -195,6 +210,8 @@ def match_flat_sheet(mattress: dict, sheet: dict, preferences: dict | None = Non
 
 
 def match_duvet_cover(duvet: dict, cover: dict, preferences: dict | None = None) -> Verdict:
+    duvet = _measures(duvet)
+    cover = _measures(cover)
     prefs = _prefs(preferences)
     tol = float(prefs["duvet_tolerance_cm"])
     if _missing(duvet.get("width"), duvet.get("length"), cover.get("width"), cover.get("length")):
@@ -241,6 +258,8 @@ def match_duvet_cover(duvet: dict, cover: dict, preferences: dict | None = None)
 
 
 def match_pillowcase(pillow: dict, case: dict, preferences: dict | None = None) -> Verdict:
+    pillow = _measures(pillow)
+    case = _measures(case)
     prefs = _prefs(preferences)
     allowance = float(prefs["pillow_allowance_cm"])
     if _missing(pillow.get("width"), pillow.get("length"), case.get("width"), case.get("length")):
@@ -285,6 +304,8 @@ def match_pillowcase(pillow: dict, case: dict, preferences: dict | None = None) 
 
 
 def match_tablecloth(table: dict, cloth: dict, preferences: dict | None = None, overhang_is_default: bool = True) -> Verdict:
+    table = _measures(table)
+    cloth = _measures(cloth)
     prefs = _prefs(preferences)
     overhang = _num(table, "overhang")
     if overhang is None:
@@ -294,8 +315,8 @@ def match_tablecloth(table: dict, cloth: dict, preferences: dict | None = None, 
         using_default = True
     else:
         using_default = overhang_is_default and _num(table, "overhang") is None
-    table_shape = (table.get("shape") or "rectangular").lower()
-    cloth_shape = (cloth.get("shape") or "").lower()
+    table_shape = _shape_name(table.get("shape") or "rectangular")
+    cloth_shape = _shape_name(cloth.get("shape") or "")
     warnings = []
     if using_default:
         warnings.append(f"Overhang of {fmt_cm(overhang)} cm is a suggestion until you set a preferred drop.")
@@ -348,6 +369,13 @@ def match_tablecloth(table: dict, cloth: dict, preferences: dict | None = None, 
     return Verdict(status, score, explanation, discrepancies, warnings)
 
 
+def _shape_name(value: str) -> str:
+    shape = (value or "").strip().lower()
+    if shape in {"carre", "carré"}:
+        return "square"
+    return shape
+
+
 def _table_status(delta: float) -> str:
     gap = abs(delta)
     if gap <= 2:
@@ -360,6 +388,8 @@ def _table_status(delta: float) -> str:
 
 
 def match_curtain(window: dict, curtain: dict, preferences: dict | None = None, fullness_is_default: bool = True) -> Verdict:
+    window = _measures(window)
+    curtain = _measures(curtain)
     prefs = _prefs(preferences)
     warnings = []
     rail = _num(window, "rail_width")

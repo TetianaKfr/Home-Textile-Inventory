@@ -154,7 +154,8 @@ async function render() {
     else if (parts[0] === "items" && parts[1]) appEl.innerHTML = shell(await itemDetailView(parts[1]));
     else if (parts[0] === "locations" && parts[1]) appEl.innerHTML = shell(await locationDetailView(parts[1]));
     else if (parts[0] === "locations") appEl.innerHTML = shell(await locationsView());
-    else if (parts[0] === "objects" && parts[1] === "new") appEl.innerHTML = shell(objectFormView());
+    else if (parts[0] === "objects" && parts[1] === "new") appEl.innerHTML = shell(await objectFormView());
+    else if (parts[0] === "objects" && parts[2] === "edit") appEl.innerHTML = shell(await objectFormView(parts[1]));
     else if (parts[0] === "objects") appEl.innerHTML = shell(await objectsView());
     else if (parts[0] === "match") appEl.innerHTML = shell(await matchView());
     else if (parts[0] === "sets") appEl.innerHTML = shell(await setsView());
@@ -498,51 +499,43 @@ async function locationsView() {
 }
 
 function homeSection(home) {
-  const rooms = home.rooms.map((room) => `<h3>${esc(room.name)}</h3>${renderTree(room.locations)}`).join("") || `<p class="muted">No rooms yet.</p>`;
+  const rooms = (home.rooms || []).map((room) => roomLine(room, home.id)).join("") || `<p class="muted">No rooms yet.</p>`;
   const actions = canEdit() ? `<div class="row">
       <button class="btn secondary" type="button" data-edit-home="${home.id}">Edit</button>
       ${canAdmin() ? `<button class="btn warn" type="button" data-delete-home="${home.id}" data-home-name="${esc(home.name)}">Delete</button>` : ""}
     </div>` : "";
-  const roomDeletes = (home.rooms || []).map((room) => `<div class="room-block">
-      <div class="room-row">
-        <strong>${esc(room.name)}</strong>
-        <button class="btn warn" type="button" data-delete-room="${room.id}" data-room-name="${esc(room.name)}" data-home-id="${home.id}">Delete</button>
-      </div>
-      ${storageEditor(room.locations, home.id)}
-    </div>`).join("");
   const editor = canEdit() ? `<div data-home-editor="${home.id}" hidden>
       <form class="filters" data-home-form="${home.id}">
         ${field("Home name", `<input name="name" required value="${esc(home.name)}">`)}
         <button class="btn" type="submit">Save</button>
         <button class="btn secondary" type="button" data-cancel-home="${home.id}">Cancel</button>
       </form>
-      <div class="room-editor">
-        <h3>Rooms</h3>
-        ${roomDeletes || `<p class="muted">No rooms yet.</p>`}
-        <p class="banner error" data-home-error="${home.id}" hidden></p>
-      </div>
+      <p class="banner error" data-home-error="${home.id}" hidden></p>
     </div>` : "";
-  return `<section class="panel" style="margin-bottom:12px">
+  return `<section class="panel home-card" style="margin-bottom:12px">
     <div class="top"><h2>${esc(home.name)}</h2>${actions}</div>
     ${editor}
-    ${rooms}
+    <div class="place-table">${rooms}</div>
   </section>`;
 }
 
-function storageEditor(nodes, homeId) {
-  if (!nodes || !nodes.length) return `<p class="muted small">No storage in this room.</p>`;
-  return `<ul class="room-edit">${nodes.map((node) => `<li>
-      <div class="room-row">
-        <span class="storage-label">${esc(node.name)} <span class="muted small">${esc(node.location_type)}</span></span>
-        <button class="btn warn" type="button" data-delete-storage="${node.id}" data-storage-name="${esc(node.name)}" data-home-id="${homeId}">Delete</button>
-      </div>
-      ${node.children && node.children.length ? storageEditor(node.children, homeId) : ""}
-    </li>`).join("")}</ul>`;
+function roomLine(room, homeId) {
+  const del = canEdit() ? `<button class="btn warn tiny edit-only" type="button" data-delete-room="${room.id}" data-room-name="${esc(room.name)}" data-home-id="${homeId}">Delete</button>` : "";
+  return `<div class="place-row">
+      <div class="place-label"><h3>${esc(room.name)}</h3></div>
+      ${del}
+    </div>${renderTree(room.locations, homeId, 1)}`;
 }
 
-function renderTree(nodes) {
+function renderTree(nodes, homeId, depth) {
   if (!nodes || !nodes.length) return "";
-  return `<ul>${nodes.map((node) => `<li><a href="#/locations/${node.id}">${esc(node.name)}</a> <span class="muted small">${esc(node.location_type)}</span>${renderTree(node.children)}</li>`).join("")}</ul>`;
+  return nodes.map((node) => `<div class="place-row">
+      <div class="place-label" style="padding-left:${depth * 18}px">
+        <a href="#/locations/${node.id}">${esc(node.name)}</a>
+        <span class="muted small">${esc(node.location_type)}</span>
+      </div>
+      ${canEdit() ? `<button class="btn warn tiny edit-only" type="button" data-delete-storage="${node.id}" data-storage-name="${esc(node.name)}" data-home-id="${homeId}">Delete</button>` : ""}
+    </div>${renderTree(node.children, homeId, depth + 1)}`).join("");
 }
 
 async function locationDetailView(id) {
@@ -556,24 +549,97 @@ async function locationDetailView(id) {
     </section>`;
 }
 
-function objectFormView() {
-  return `<div class="top"><h1>Add a household object</h1></div>
+function measureInput(name, value) {
+  const number = Number(value);
+  const shown = value == null || value === "" || !Number.isFinite(number) || number < 0 ? "" : esc(value);
+  return `<input name="${name}" type="text" inputmode="decimal" autocomplete="off" data-measure="1" placeholder="type a size, 0 or more" value="${shown}">`;
+}
+
+function bindMeasureFields(form) {
+  form.querySelectorAll("[data-measure]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const cleaned = input.value.replace(",", ".").replace(/[^\d.]/g, "");
+      const parts = cleaned.split(".");
+      const next = parts.length > 1 ? `${parts[0]}.${parts.slice(1).join("")}` : parts[0];
+      if (next !== input.value) input.value = next;
+    });
+  });
+}
+
+function objectMeasures(obj) {
+  const bits = [];
+  const add = (label, value) => {
+    const number = Number(value);
+    if (value == null || value === "" || !Number.isFinite(number) || number < 0) return;
+    const text = Number.isInteger(number) ? String(number) : String(Math.round(number * 10) / 10);
+    bits.push(`${label} ${text} cm`);
+  };
+  add("width", obj.width);
+  add("length", obj.length);
+  add("height", obj.height);
+  add("diameter", obj.diameter);
+  add("depth", obj.depth);
+  const attrs = obj.attributes || {};
+  add("rail", attrs.rail_width);
+  add("curtain length", attrs.desired_length);
+  return bits.join(" · ") || "Enter the length and height";
+}
+
+function syncObjectPlace() {
+  const form = document.getElementById("object-form");
+  const tree = window.__objectTree || { homes: [] };
+  if (!form || !form.elements.home_id || !form.elements.room_id) return;
+  const home = (tree.homes || []).find((item) => String(item.id) === form.elements.home_id.value);
+  const rooms = home ? home.rooms || [] : [];
+  const selected = form.elements.room_id.value || form.elements.room_id.dataset.selected || "";
+  fillSelect(
+    form.elements.room_id,
+    rooms.map((room) => ({ id: room.id, label: room.name })),
+    selected,
+    "No room yet",
+  );
+  form.elements.room_id.dataset.selected = "";
+}
+
+async function objectFormView(id) {
+  let existing = null;
+  if (id) {
+    const objects = await api("/api/objects");
+    existing = objects.find((obj) => String(obj.id) === String(id)) || null;
+    if (!existing) return `<div class="top"><h1>Object not found</h1></div>`;
+  }
+  const tree = await api("/api/locations/tree");
+  window.__objectTree = tree;
+  const attrs = existing && existing.attributes ? existing.attributes : {};
+  const kind = existing ? existing.kind : "bed";
+  const kinds = [["bed", "Bed"], ["mattress", "Mattress"], ["table", "Table"], ["window", "Window"]];
+  const shapes = [["", ""], ["rectangular", "rectangular"], ["round", "round"], ["oval", "oval"], ["square", "carre"]];
+  const shape = existing && existing.shape === "carré" ? "square" : (existing ? existing.shape || "" : "");
+  const homeId = existing && existing.home_id != null ? String(existing.home_id) : "";
+  const roomId = existing && existing.room_id != null ? String(existing.room_id) : "";
+  const homes = tree.homes || [];
+  return `<div class="top"><h1>${existing ? "Change length and height" : "Add a household object"}</h1></div>
     <form id="object-form" class="panel filters">
-      ${field("Type", `<select name="kind"><option value="bed">Bed</option><option value="mattress">Mattress</option><option value="table">Table</option><option value="window">Window</option></select>`)}
-      ${field("Name", `<input name="name" required>`)}
-      ${field("Shape", `<input name="shape" placeholder="rectangular, round, oval">`)}
-      ${field("Width cm", `<input name="width" type="number" step="0.1">`)}
-      ${field("Length cm", `<input name="length" type="number" step="0.1">`)}
-      ${field("Height cm", `<input name="height" type="number" step="0.1">`)}
-      ${field("Diameter cm", `<input name="diameter" type="number" step="0.1">`)}
-      ${field("Mattress depth cm", `<input name="depth" type="number" step="0.1">`)}
-      ${field("Curtain rail width", `<input name="rail_width" type="number" step="0.1">`)}
-      ${field("Desired curtain length", `<input name="desired_length" type="number" step="0.1">`)}
-      ${field("Fullness ratio", `<input name="fullness" type="number" step="0.1" placeholder="2">`)}
-      ${field("Attachment", `<input name="attachment" placeholder="eyelets">`)}
-      ${field("Preferred table overhang cm", `<input name="overhang" type="number" step="0.1">`)}
-      ${field("Notes", `<textarea name="notes"></textarea>`)}
-      <button class="btn" type="submit">Save object</button>
+      <p class="muted">Choose the home and the room from the lists. Type the length, height, diameter, mattress depth, curtain rail width and desired curtain length. A negative number cannot be entered.</p>
+      ${existing ? `<input type="hidden" name="object_id" value="${existing.id}">` : ""}
+      ${field("Type", `<select name="kind">${kinds.map(([value, label]) => `<option value="${value}" ${kind === value ? "selected" : ""}>${label}</option>`).join("")}</select>`)}
+      ${field("Name", `<input name="name" required value="${esc(existing ? existing.name : "")}">`)}
+      ${field("Home", `<select name="home_id"><option value="">No home yet</option>${homes.map((home) => `<option value="${home.id}" ${String(home.id) === homeId ? "selected" : ""}>${esc(home.name)}</option>`).join("")}</select>`)}
+      ${field("Room", `<select name="room_id" data-selected="${esc(roomId)}"></select>`)}
+      ${field("Shape", `<select name="shape">${shapes.map(([value, label]) => `<option value="${esc(value)}" ${shape === value ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>`)}
+      ${field("Width cm", measureInput("width", existing && existing.width))}
+      ${field("Length cm", measureInput("length", existing && existing.length))}
+      ${field("Height cm", measureInput("height", existing && existing.height))}
+      ${field("Diameter cm", measureInput("diameter", existing && existing.diameter))}
+      ${field("Mattress depth cm", measureInput("depth", existing && existing.depth))}
+      ${field("Curtain rail width", measureInput("rail_width", attrs.rail_width))}
+      ${field("Desired curtain length", measureInput("desired_length", attrs.desired_length))}
+      ${field("Fullness ratio", measureInput("fullness", attrs.fullness))}
+      ${field("Attachment", `<input name="attachment" placeholder="eyelets" value="${esc(attrs.attachment || "")}">`)}
+      ${field("Preferred table overhang cm", measureInput("overhang", attrs.overhang))}
+      ${field("Notes", `<textarea name="notes">${esc(existing ? existing.notes : "")}</textarea>`)}
+      <button class="btn" type="submit">${existing ? "Save measurements" : "Save object"}</button>
+      <p id="object-error" class="banner error" hidden></p>
     </form>`;
 }
 
@@ -581,9 +647,11 @@ async function objectsView() {
   const objects = await api("/api/objects");
   return `<div class="top"><h1>Beds, tables and windows</h1>${canEdit() ? `<a class="btn" href="#/objects/new">Add object</a>` : ""}</div>
     <div class="grid">${objects.map((obj) => `<article class="card"><div class="body"><strong>${esc(obj.name)}</strong>
-      <div class="small muted">${esc(obj.kind)} · ${esc(obj.home_name)} ${esc(obj.room_name)}</div>
-      <div>${esc(obj.dimensions_label)}${obj.depth ? ` · depth ${esc(obj.depth)} cm` : ""}</div>
-      <a href="#/match?object=${obj.id}">Find compatible textiles</a></div></article>`).join("") || "<p>No household objects yet.</p>"}</div>`;
+      <div class="small muted">${esc(obj.kind)}${[obj.home_name, obj.room_name].filter(Boolean).length ? ` · ${esc([obj.home_name, obj.room_name].filter(Boolean).join(" · "))}` : ""}</div>
+      <div>${esc(objectMeasures(obj))}</div>
+      <div class="row"><a href="#/match?object=${obj.id}">Find compatible textiles</a>
+      ${canEdit() ? `<a href="#/objects/${obj.id}/edit">Change length and height</a>` : ""}</div>
+      </div></article>`).join("") || "<p>No household objects yet.</p>"}</div>`;
 }
 
 async function matchView() {
@@ -593,8 +661,8 @@ async function matchView() {
     <p class="muted">Technical fit is decided from measurements. Color is scored separately and never turns an incompatible size into a match.</p>
     <form id="match-form" class="filters">
       ${field("Object", `<select name="object_id">${objects.map((obj) => `<option value="${obj.id}" ${String(selected) === String(obj.id) ? "selected" : ""}>${esc(obj.kind)} — ${esc(obj.name)}</option>`).join("")}</select>`)}
-      ${field("Table overhang cm", `<input name="table_overhang_cm" type="number" step="0.1" placeholder="suggestion 25">`)}
-      ${field("Curtain fullness", `<input name="curtain_fullness" type="number" step="0.1" placeholder="suggestion 2">`)}
+      ${field("Table overhang cm", `<input name="table_overhang_cm" type="number" min="0" step="0.1" placeholder="suggestion 25">`)}
+      ${field("Curtain fullness", `<input name="curtain_fullness" type="number" min="0" step="0.1" placeholder="suggestion 2">`)}
       <button class="btn" type="submit">Check compatibility</button>
     </form>
     <div id="match-results"></div>`;
@@ -662,7 +730,7 @@ async function settingsView() {
     <form id="prefs" class="panel filters">
       <h2>Matching suggestions</h2>
       <p class="small muted">These defaults are labeled as suggestions in every result until you change them.</p>
-      ${Object.entries(prefs).map(([key, value]) => field(key.replaceAll("_", " "), `<input name="${esc(key)}" type="number" step="0.1" value="${esc(value)}">`)).join("")}
+      ${Object.entries(prefs).map(([key, value]) => field(key.replaceAll("_", " "), `<input name="${esc(key)}" type="number" min="0" step="0.1" value="${esc(value)}">`)).join("")}
       ${canAdmin() ? `<button class="btn" type="submit">Save preferences</button>` : `<p>Only an administrator can change these.</p>`}
     </form>
     <section class="panel" style="margin-top:12px"><h2>Compatibility relationships</h2>
@@ -779,7 +847,12 @@ function bindPage(parts) {
     };
   });
   const objectForm = document.getElementById("object-form");
-  if (objectForm) objectForm.onsubmit = saveObject;
+  if (objectForm) {
+    bindMeasureFields(objectForm);
+    syncObjectPlace();
+    if (objectForm.elements.home_id) objectForm.elements.home_id.onchange = syncObjectPlace;
+    objectForm.onsubmit = saveObject;
+  }
   const matchForm = document.getElementById("match-form");
   if (matchForm) matchForm.onsubmit = runMatch;
   const inviteForm = document.getElementById("invite-form");
@@ -972,17 +1045,41 @@ async function savePlace(event) {
 async function saveObject(event) {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target).entries());
-  const number = (key) => data[key] === "" ? null : Number(data[key]);
-  await api("/api/objects", { method: "POST", body: {
+  const error = document.getElementById("object-error");
+  error.hidden = true;
+  const measureKeys = ["width", "length", "height", "diameter", "depth", "rail_width", "desired_length", "fullness", "overhang"];
+  const number = (key) => {
+    const raw = String(data[key] ?? "").trim().replace(",", ".");
+    if (raw === "") return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : Number.NaN;
+  };
+  if (measureKeys.some((key) => data[key] !== "" && !(number(key) >= 0))) {
+    error.hidden = false;
+    error.textContent = "Type a measurement of zero or more. A negative number is not saved.";
+    return;
+  }
+  const body = {
     kind: data.kind, name: data.name, shape: data.shape || "",
+    home_id: data.home_id ? Number(data.home_id) : null,
+    room_id: data.room_id ? Number(data.room_id) : null,
     width: number("width"), length: number("length"), height: number("height"),
     diameter: number("diameter"), depth: number("depth"), notes: data.notes || "",
     attributes: {
       rail_width: number("rail_width"), desired_length: number("desired_length"),
       fullness: number("fullness"), attachment: data.attachment || "", overhang: number("overhang"),
     },
-  }});
-  go("#/objects");
+  };
+  try {
+    await api(data.object_id ? "/api/objects/" + data.object_id : "/api/objects", {
+      method: data.object_id ? "PATCH" : "POST",
+      body,
+    });
+    go("#/objects");
+  } catch (err) {
+    error.hidden = false;
+    error.textContent = messageOf(err);
+  }
 }
 
 let lastMatch = null;

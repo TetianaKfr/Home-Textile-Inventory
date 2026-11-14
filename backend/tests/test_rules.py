@@ -6,7 +6,26 @@ from app.services.compatibility import (
     match_pillowcase,
     match_tablecloth,
 )
-from app.services.dimensions import parse_dimension_pair
+from app.services.dimensions import parse_dimension_pair, usable_measure
+
+
+def test_negative_measurements_are_not_results():
+    assert usable_measure(-12) is None
+    assert usable_measure(0) == 0
+    assert usable_measure("190.5") == 190.5
+    sheet = match_flat_sheet({"width": -140, "length": 190}, {"width": 200, "length": 260})
+    cloth = match_tablecloth(
+        {"shape": "rectangular", "width": 90, "length": -160, "overhang": -25},
+        {"shape": "rectangular", "width": 140, "length": 210},
+    )
+    curtain = match_curtain(
+        {"width": -160, "rail_width": -200, "desired_length": -30, "fullness": -2},
+        {"panel_width": 200, "panel_count": 2, "length": 250, "attachment": "eyelets"},
+        fullness_is_default=False,
+    )
+    for verdict in (sheet, cloth, curtain):
+        text = " ".join([verdict.explanation, *verdict.discrepancies, *verdict.warnings])
+        assert "-" not in text
 
 
 def test_dimension_parser_keeps_width_first():

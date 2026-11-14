@@ -8,6 +8,19 @@ def _to_float(value: str) -> float:
     return float(value.replace(",", "."))
 
 
+def usable_measure(value) -> float | None:
+    """Keep a measurement the user typed. A negative number is not a result."""
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0:
+        return None
+    return number
+
+
 def parse_dimension_pair(text: str) -> tuple[float, float] | None:
     """Parse a width-then-length pair. The first number stays width; values are not swapped."""
     if not text:

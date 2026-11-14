@@ -14,7 +14,7 @@ from app.services.compatibility import (
     visual_score,
     worst_status,
 )
-from app.services.dimensions import size_label
+from app.services.dimensions import size_label, usable_measure
 
 
 def _attrs(item: Item) -> dict:
@@ -150,15 +150,18 @@ def _match_table(obj, target, items, path, prefs, overhang_default) -> dict:
 
 
 def row_required_table(target, prefs) -> str:
-    overhang = target.get("overhang") or prefs.get("table_overhang_cm")
-    if (target.get("shape") or "") == "round" and target.get("diameter"):
-        return f"about ⌀ {target['diameter'] + 2 * float(overhang):.0f} cm"
-    if target.get("width") and target.get("length"):
-        return (
-            f"about {target['width'] + 2 * float(overhang):.0f} × "
-            f"{target['length'] + 2 * float(overhang):.0f} cm"
-        )
-    return "size depends on the table measurements"
+    overhang = usable_measure(target.get("overhang"))
+    if overhang is None:
+        overhang = usable_measure(prefs.get("table_overhang_cm"))
+    if (target.get("shape") or "") == "round":
+        diameter = usable_measure(target.get("diameter"))
+        if diameter is not None and overhang is not None:
+            return f"about ⌀ {diameter + 2 * overhang:.0f} cm"
+    width = usable_measure(target.get("width"))
+    length = usable_measure(target.get("length"))
+    if width is not None and length is not None and overhang is not None:
+        return f"about {width + 2 * overhang:.0f} × {length + 2 * overhang:.0f} cm"
+    return "Enter the table length and width. A negative size is not used."
 
 
 def _match_window(obj, target, items, path, prefs, fullness_default) -> dict:
@@ -183,9 +186,17 @@ def _match_window(obj, target, items, path, prefs, fullness_default) -> dict:
     ]
     missing = []
     if not found:
-        rail = target.get("rail_width") or target.get("width")
-        fullness = target.get("fullness") or prefs.get("curtain_fullness")
-        required = f"about {float(rail) * float(fullness):.0f} cm total width" if rail else "rail width is unknown"
+        rail = usable_measure(target.get("rail_width"))
+        if rail is None:
+            rail = usable_measure(target.get("width"))
+        fullness = usable_measure(target.get("fullness"))
+        if fullness is None:
+            fullness = usable_measure(prefs.get("curtain_fullness"))
+        required = (
+            f"about {rail * fullness:.0f} cm total width"
+            if rail is not None and fullness is not None
+            else "Enter the window width and the curtain length."
+        )
         missing.append({"category": "Curtains", "reason": "No technically compatible curtains were found.", "required": required})
     return _envelope(obj, combinations, rejected, missing, prefs)
 
