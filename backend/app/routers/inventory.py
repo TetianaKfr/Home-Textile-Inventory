@@ -275,6 +275,7 @@ def list_items(
     max_width: float | None = None,
     min_length: float | None = None,
     max_length: float | None = None,
+    size: str = "",
     sort: str = "name",
     include_archived: bool = False,
 ):
@@ -293,6 +294,14 @@ def list_items(
     if location_id is not None:
         descendant_ids = _descendants(location_id, locations)
     tokens = [token for token in re.split(r"\s+", q.strip().lower()) if token]
+    size_pair = None
+    if size.strip():
+        size_pair = parse_dimension_pair(size)
+        if size_pair is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Could not read that size. Use width × length, for example 220 × 200.",
+            )
 
     def keep(item: Item) -> bool:
         if category_id and item.category_id != category_id:
@@ -314,6 +323,8 @@ def list_items(
         if min_length is not None and (item.length is None or item.length < min_length):
             return False
         if max_length is not None and (item.length is None or item.length > max_length):
+            return False
+        if size_pair is not None and not _matches_size(item.width, item.length, size_pair):
             return False
         units = [unit for unit in item.units if not unit.archived]
         if status and not any(unit.status == status for unit in units):
@@ -348,6 +359,18 @@ def list_items(
     filtered = [item for item in items if keep(item)]
     filtered.sort(key=lambda item: _sort_key(item, sort, path))
     return [item_dict(item, path) for item in filtered]
+
+
+def _close_cm(left: float | None, right: float) -> bool:
+    return left is not None and abs(left - right) <= 1
+
+
+def _matches_size(width: float | None, length: float | None, pair: tuple[float, float]) -> bool:
+    """Match width × length, and the same pair written the other way around."""
+    first, second = pair
+    straight = _close_cm(width, first) and _close_cm(length, second)
+    rotated = _close_cm(width, second) and _close_cm(length, first)
+    return straight or rotated
 
 
 def _descendants(location_id: int, locations) -> set[int]:

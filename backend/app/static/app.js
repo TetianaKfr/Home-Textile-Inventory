@@ -99,7 +99,6 @@ function shell(content) {
     ["#/dashboard", "Dashboard"],
     ["#/inventory", "Inventory"],
     ["#/items/new", "Add item"],
-    ["#/search", "Search"],
     ["#/match", "AI matching"],
     ["#/locations", "Storage"],
     ["#/objects", "Beds, tables, windows"],
@@ -147,8 +146,13 @@ async function render() {
       await renderAccept(parts[1]);
       return;
     }
+    if (parts[0] === "search") {
+      const query = location.hash.includes("?") ? "?" + location.hash.split("?")[1] : "";
+      go("#/inventory" + query);
+      return;
+    }
     if (parts[0] === "dashboard") appEl.innerHTML = shell(await dashboardView());
-    else if (parts[0] === "inventory" || parts[0] === "search") appEl.innerHTML = shell(await inventoryView());
+    else if (parts[0] === "inventory") appEl.innerHTML = shell(await inventoryView());
     else if (parts[0] === "items" && parts[1] === "new") appEl.innerHTML = shell(await itemFormView(null));
     else if (parts[0] === "items" && parts[2] === "edit") appEl.innerHTML = shell(await itemFormView(parts[1]));
     else if (parts[0] === "items" && parts[1]) appEl.innerHTML = shell(await itemDetailView(parts[1]));
@@ -277,13 +281,28 @@ function cards(items) {
   }).join("")}</div>`;
 }
 
+function parseSize(text) {
+  const match = String(text || "").trim().match(/^(\d+(?:[.,]\d+)?)\s*(?:x|×|\/|by|на)\s*(\d+(?:[.,]\d+)?)$/i);
+  if (!match) return null;
+  return [Number(match[1].replace(",", ".")), Number(match[2].replace(",", "."))];
+}
+
 async function inventoryView() {
-  const categories = await api("/api/categories");
+  const [categories, tree] = await Promise.all([
+    api("/api/categories"),
+    api("/api/locations/tree"),
+  ]);
+  const homes = tree.homes || [];
   const params = route().params;
+  const sizeText = params.get("size") || "";
+  const sizeError = sizeText && !parseSize(sizeText)
+    ? "Could not read that size. Use width × length, for example 220 × 200."
+    : "";
   const query = new URLSearchParams();
-  ["q", "category_id", "color", "material", "pattern", "status", "seasonality", "sort"].forEach((key) => {
+  ["q", "category_id", "color", "material", "pattern", "status", "seasonality", "sort", "size", "home_id"].forEach((key) => {
     if (params.get(key)) query.set(key, params.get(key));
   });
+  if (sizeError) query.delete("size");
   let items = [];
   try {
     items = await api("/api/items?" + query.toString());
@@ -296,6 +315,8 @@ async function inventoryView() {
   return `<div class="top"><h1>Inventory</h1>${canEdit() ? `<a class="btn" href="#/items/new">Add item</a>` : ""}</div>
     <form id="filters" class="filters">
       ${field("Search", `<input name="q" value="${esc(params.get("q") || "")}" placeholder="white pillowcase, box 4, cotton">`)}
+      ${field("Size", `<input name="size" value="${esc(sizeText)}" placeholder="220 × 200" inputmode="decimal">`)}
+      ${field("House", `<select name="home_id"><option value="">Any</option>${homes.map((home) => `<option value="${home.id}" ${params.get("home_id") == home.id ? "selected" : ""}>${esc(home.name)}</option>`).join("")}</select>`)}
       ${field("Category", `<select name="category_id"><option value="">Any</option>${categories.map((c) => `<option value="${c.id}" ${params.get("category_id") == c.id ? "selected" : ""}>${esc(c.group_name)} — ${esc(c.name)}</option>`).join("")}</select>`)}
       ${field("Color", `<input name="color" list="colors" value="${esc(params.get("color") || "")}">`)}
       ${field("Material", `<input name="material" list="materials" value="${esc(params.get("material") || "")}">`)}
@@ -305,6 +326,7 @@ async function inventoryView() {
         ${["name", "category", "width", "created", "location"].map((s) => `<option ${params.get("sort") === s ? "selected" : ""}>${s}</option>`).join("")}
       </select>`)}
       <button class="btn" type="submit">Apply</button>
+      ${sizeError ? `<p class="banner error">${esc(sizeError)}</p>` : ""}
     </form>
     <datalist id="colors">${options(state.meta.colors)}</datalist>
     <datalist id="materials">${options(state.meta.materials)}</datalist>
