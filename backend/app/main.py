@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from app.database import Base, SessionLocal, engine
 from app.routers import auth, inventory, places, sets
@@ -29,9 +29,24 @@ async def lifespan(app: FastAPI):
     if last_error is not None:
         raise RuntimeError("Database did not become ready") from last_error
     Base.metadata.create_all(bind=engine)
+    _ensure_home_photo_columns()
     with SessionLocal() as db:
         seed(db)
     yield
+
+
+def _ensure_home_photo_columns() -> None:
+    columns = {column["name"] for column in inspect(engine).get_columns("homes")}
+    statements = []
+    if "photo_path" not in columns:
+        statements.append("ALTER TABLE homes ADD COLUMN photo_path VARCHAR(512)")
+    if "thumb_path" not in columns:
+        statements.append("ALTER TABLE homes ADD COLUMN thumb_path VARCHAR(512)")
+    if not statements:
+        return
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
 
 
 app = FastAPI(title="Home Textile Inventory", lifespan=lifespan)

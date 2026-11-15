@@ -2,16 +2,20 @@ import secrets
 from io import BytesIO
 
 import qrcode
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.deps import Context, get_context, require_role
-from app.models import Home, HouseholdObject, Item, ItemUnit, Room, StorageLocation
+from app.database import get_db
+from app.deps import Context, bearer, get_context, require_role
+from app.models import FamilyGroup, Home, HouseholdObject, Item, ItemUnit, Membership, Room, StorageLocation, User
+from app.security import decode_token
 from app.serialize import object_dict
 from app.services.activity import add_audit, add_history
+from app.services.images import absolute_path, save_photo
 from app.services.places import location_catalog
 
 router = APIRouter(prefix="/api")
@@ -98,6 +102,7 @@ def _tree(ctx: Context) -> dict:
             {
                 "id": home.id,
                 "name": home.name,
+                "has_photo": bool(home.photo_path),
                 "rooms": [
                     {
                         "id": room.id,
@@ -135,13 +140,100 @@ def rename_home(home_id: int, payload: NameIn, ctx: Context = Depends(require_ro
     return {"id": home.id, "name": home.name}
 
 
+@router.post("/homes/{home_id}/photo")
+async def upload_home_photo(home_id: int, file: UploadFile = File(...), ctx: Context = Depends(require_role("editor"))):
+    home = _home(ctx, home_id)
+    content = await file.read()
+    if len(content) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Photographs must be 8 MB or smaller")
+    try:
+        full_path, thumb_path = save_photo(content, ctx.family.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    previous = [home.photo_path, home.thumb_path]
+    home.photo_path = full_path
+    home.thumb_path = thumb_path
+    add_audit(ctx.db, ctx.family.id, ctx.user.id, "home_photo_changed", {"home_id": home.id, "name": home.name})
+    ctx.db.commit()
+    _remove_photo_files(previous)
+    return {"id": home.id, "has_photo": True}
+
+
+@router.delete("/homes/{home_id}/photo")
+def delete_home_photo(home_id: int, ctx: Context = Depends(require_role("editor"))):
+    home = _home(ctx, home_id)
+    previous = [home.photo_path, home.thumb_path]
+    home.photo_path = None
+    home.thumb_path = None
+    add_audit(ctx.db, ctx.family.id, ctx.user.id, "home_photo_removed", {"home_id": home.id, "name": home.name})
+    ctx.db.commit()
+    _remove_photo_files(previous)
+    return {"id": home.id, "has_photo": False}
+
+
+@router.get("/homes/{home_id}/photo")
+def home_photo_file(
+    home_id: int,
+    size: str = Query(default="thumb"),
+    access_token: str | None = None,
+    family_id: int | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    db=Depends(get_db),
+):
+    raw = credentials.credentials if credentials is not None else access_token
+    ctx = _context_from_token(db, raw, family_id)
+    home = _home(ctx, home_id)
+    relative = home.thumb_path if size == "thumb" else home.photo_path
+    if not relative:
+        raise HTTPException(status_code=404, detail="This home has no photograph")
+    try:
+        path = absolute_path(relative)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Photograph file is missing") from exc
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Photograph file is missing")
+    return Response(content=path.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+def _remove_photo_files(paths: list[str | None]) -> None:
+    for relative in paths:
+        if not relative:
+            continue
+        try:
+            absolute_path(relative).unlink(missing_ok=True)
+        except ValueError:
+            pass
+
+
+def _context_from_token(db, raw: str | None, family_id: int | None) -> Context:
+    if not raw:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        user_id = decode_token(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired session") from exc
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    memberships = list(db.scalars(select(Membership).where(Membership.user_id == user.id)))
+    chosen = next((row for row in memberships if family_id is None or row.family_id == family_id), None)
+    if chosen is None:
+        raise HTTPException(status_code=403, detail="No access to this family group")
+    family = db.get(FamilyGroup, chosen.family_id)
+    return Context(user=user, family=family, membership=chosen, db=db)
+
+
 @router.delete("/homes/{home_id}")
 def archive_home(home_id: int, ctx: Context = Depends(require_role("admin"))):
     home = _home(ctx, home_id)
+    previous = [home.photo_path, home.thumb_path]
     home.archived = True
+    home.photo_path = None
+    home.thumb_path = None
     for room in ctx.db.scalars(select(Room).where(Room.home_id == home.id)).all():
         room.archived = True
     ctx.db.commit()
+    _remove_photo_files(previous)
     return {"archived": home_id}
 
 
@@ -337,10 +429,25 @@ def list_objects(kind: str = "", ctx: Context = Depends(get_context)):
     homes, rooms, _, _ = location_catalog(ctx.db, ctx.family.id)
     home_names = {home.id: home.name for home in homes}
     room_names = {room.id: room.name for room in rooms}
-    return [
+    rows = [
         object_dict(obj, home_names.get(obj.home_id, ""), room_names.get(obj.room_id, ""))
-        for obj in ctx.db.scalars(stmt.order_by(HouseholdObject.name))
+        for obj in ctx.db.scalars(stmt)
     ]
+    rows.sort(key=_object_order)
+    return rows
+
+
+def _object_order(row: dict) -> tuple:
+    def place(value: str) -> tuple[bool, str]:
+        text = (value or "").casefold()
+        return (not text, text)
+
+    return (
+        *place(row.get("home_name") or ""),
+        *place(row.get("room_name") or ""),
+        (row.get("name") or "").casefold(),
+        row.get("kind") or "",
+    )
 
 
 @router.post("/objects", status_code=201)

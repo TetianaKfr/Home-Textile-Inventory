@@ -9,6 +9,8 @@
 
 Source: `Home Textile Inventory SRS.pdf`
 
+The rules below follow the current application. Search and filters live on the inventory. Each physical unit keeps its own place. A room or storage location that still holds items cannot be deleted. A negative measurement is never treated as a size.
+
 ## 1. Project Overview
 
 ### 1.1. Purpose
@@ -76,7 +78,7 @@ The initial permission model should include three roles:
 | Role | Permissions |
 | --- | --- |
 | Administrator | Full access to all data, users, settings, and inventory |
-| Editor | Add, edit, move, and manage inventory items |
+| Editor | Add, edit, move, and manage inventory items. Delete an empty room or storage location. A home can be deleted only by an administrator |
 | Viewer | View inventory, search, filter, and inspect item details |
 
 The system must support:
@@ -93,21 +95,21 @@ All permissions must be enforced on the server side, not only in the user interf
 
 ## 3. Application Structure
 
-The main navigation should contain the following sections:
+The main navigation contains the following sections:
 
 1. Dashboard
-2. Inventory Catalogue
+2. Inventory, including the catalogue, search, and filters
 3. Add Item
 4. AI Matching
-5. Search
-6. Storage Locations
-7. Beds and Sleeping Spaces
-8. Tables and Windows
-9. Saved Sets
-10. Users and Family Group
-11. Settings
+5. Storage Locations
+6. Beds, tables, and windows
+7. Saved Sets
+8. Family
+9. Settings
 
-The exact navigation layout may differ between mobile and desktop versions, but all major functions must remain available.
+Search is not a separate screen. An address that still points at search opens the inventory and keeps the same filters.
+
+Beds, mattresses, tables, and windows share one section. The exact navigation layout may differ between mobile and desktop versions, but all major functions must remain available.
 
 ### 3.1. Dashboard
 
@@ -248,7 +250,11 @@ The system must accept different user input formats, including:
 
 The application must normalize these values into a consistent internal format.
 
-The system must not automatically reverse width and length without checking the item category and context.
+When an item’s dimensions are entered as a pair, the first number is stored as width and the second as length. The application does not swap them on save.
+
+A size used only as a search filter may match the same two numbers in either order. See section 11.
+
+Zero is a valid measurement. A negative number is not a measurement. It is not saved on a bed, mattress, table, or window, and compatibility calculations ignore it. A recommended size, an explanation, or a warning must not show a negative number.
 
 ### 5.3. Colors
 
@@ -639,9 +645,21 @@ Users must be able to:
 
 The system must retain a history of item movements.
 
+An editor can delete a room or a storage location. Deleting a home stays limited to an administrator.
+
+A room that still holds an active item cannot be deleted. The application asks the user to move the items out first. When the room no longer holds items, deleting it archives the room and every storage location inside it, and clears that room from beds, tables, and windows that used it.
+
+A storage location that still holds an active item, including in a nested child, cannot be deleted. The application asks the user to move the items out first. Deleting an empty location archives that location and every nested location under it.
+
+A nested location must remain in the same room as its parent.
+
+Each physical unit records its place as separate facts: home, room, the storage it sits inside, location type, and location name, together with the full path. A card shows the place as home / room / location name. The item detail shows the home, the room, the containing storage, and the type separately. A unit with no location is shown as having no location.
+
 ### 8.3. QR Codes
 
-The application should support optional QR codes for storage boxes, cupboards, and other storage locations.
+The application should support optional QR codes for storage boxes.
+
+A QR code is available only when the location type is box. A shelf, drawer, or cupboard does not show a QR image.
 
 Each QR code should identify a specific location.
 
@@ -661,6 +679,8 @@ The user should be able to move items into or out of the scanned location.
 An individual physical item must have a clear current location.
 
 If identical items are stored in different places, the system must be able to track their locations separately.
+
+When an item is edited, each physical unit has its own location. A new item chooses one location for the units created with it. The location may be left empty.
 
 ## 9. Item Quantities and Individual Units
 
@@ -740,7 +760,11 @@ This history should help users understand where an item was previously stored an
 
 The application must provide a powerful search function across the entire inventory.
 
+Search and the combined filters are part of the inventory catalogue. There is no separate search screen.
+
 ### 11.1. Search Criteria
+
+The inventory filters are free text, size, house, category, color, material, pattern, status, and seasonality. Results can be sorted by name, category, width, date added, or location.
 
 Users must be able to search by:
 
@@ -778,6 +802,12 @@ Examples:
 
 The search system must combine filters using logical AND/OR behavior where appropriate.
 
+A size filter is a width-then-length pair. Accepted separators are ×, x, /, by, and на, for example 220 × 200. A value that cannot be read is rejected, with a request to use that form, and the size filter is not applied.
+
+An item matches a size when its width and length are each within 1 cm of the pair, or within 1 cm of the same pair written the other way around. An item with a missing width or length does not match a size filter. This orientation check applies only to search. Saved dimensions keep the order entered in section 5.2.
+
+An item matches a house when at least one of its physical units is stored in that house.
+
 ### 11.3. Search Results
 
 Search results should display:
@@ -789,7 +819,7 @@ Search results should display:
 - Main color.
 - Quantity.
 - Current status.
-- Storage location.
+- Storage location, shown as home / room / location name when those facts exist.
 
 Users should be able to open an item directly from the search results.
 
@@ -958,6 +988,8 @@ The user should be able to set a preferred overhang.
 
 If the user has not specified an overhang, the application may suggest a default value, but it must clearly identify it as a suggestion.
 
+The shape labels carré and carre mean square when a table is compared with a tablecloth.
+
 ### 12.8. Window and Curtain Compatibility
 
 Curtain matching must consider more than window dimensions.
@@ -1031,6 +1063,14 @@ For example:
 
 The application should display the missing category and the required dimensions.
 
+### 12.11. Measurements and place checks
+
+A negative width, length, height, diameter, depth, overhang, rail width, desired curtain length, or fullness is rejected when a bed, mattress, table, or window is saved. The interface does not keep a negative number. Zero is allowed. An empty optional measurement is not stored.
+
+Compatibility treats a negative measurement as missing. If a table has no usable width and length, or no usable diameter when it is round, the required tablecloth size asks for the table length and width. If a window has no usable rail width or window width, or no usable fullness, the required curtain width asks for the window width and the curtain length.
+
+A bed, mattress, table, or window may name a room only together with a home, and that room must belong to the selected home.
+
 ## 13. Saved Sets and Combinations
 
 Users must be able to save suggested or manually created combinations.
@@ -1072,7 +1112,7 @@ The user selects a category and fills in the relevant fields.
 
 The form must display only the attributes relevant to the selected category.
 
-The user can add photographs and specify the storage location.
+The user can add photographs and specify one storage location for the units created with the item. That location may be left empty.
 
 ### 14.2. AI-Assisted Entry
 
@@ -1092,7 +1132,9 @@ The user reviews the suggestions, corrects them, enters missing details, and sav
 
 ### 14.3. Editing
 
-Users with sufficient permissions must be able to edit item details.
+Users with sufficient permissions must be able to edit item details, including the storage location of each physical unit.
+
+An item with one unit shows one location field. An item with several units shows one location field per unit.
 
 Editing should not overwrite historical information without retaining an audit record.
 
@@ -1340,7 +1382,7 @@ Inventory cards should display:
 - Main color.
 - Quantity.
 - Status.
-- Storage location.
+- Storage location, shown as home / room / location name when those facts exist.
 
 ### 20.2. Item Details
 
@@ -1349,7 +1391,7 @@ An item detail screen should display all available information, including:
 - Photograph gallery.
 - Measurements.
 - Attributes.
-- Current location.
+- Current location of each physical unit: home, room, containing storage, and location type.
 - Status.
 - Related objects and compatible textiles.
 - History.
@@ -1435,6 +1477,8 @@ The initial application should not be considered complete until the following re
 - Dimensions are stored consistently in centimeters.
 - Items can be assigned to specific homes and storage locations.
 - Individual physical units can have separate locations and statuses.
+- Editing an item can change the location of each physical unit.
+- A room or storage location that still contains items cannot be deleted.
 
 ### 22.2. Multi-User Access
 
@@ -1445,8 +1489,10 @@ The initial application should not be considered complete until the following re
 
 ### 22.3. Search
 
-- Users can search by category, dimensions, color, material, status, and location.
-- Multiple filters can be applied together.
+- Users can search by category, dimensions, color, material, status, and location from the inventory.
+- Multiple filters can be applied together, including house and a size such as 220 × 200.
+- A size matches either orientation, within 1 cm on each side.
+- An unreadable size is rejected and is not applied.
 - Search results display the correct item and location information.
 
 ### 22.4. AI Recognition
@@ -1467,6 +1513,9 @@ The initial application should not be considered complete until the following re
 - Technical compatibility is displayed separately from visual compatibility.
 - The system can identify missing items.
 - Users can save recommended combinations.
+- A negative measurement is not saved and is not used as a size.
+- A room chosen for a bed, mattress, table, or window belongs to the selected home.
+- A QR code is shown only for a box.
 
 ### 22.6. Synchronization
 

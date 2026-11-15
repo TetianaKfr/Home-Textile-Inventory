@@ -69,6 +69,8 @@ class Home(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     family_id: Mapped[int] = mapped_column(ForeignKey("family_groups.id"), index=True)
     name: Mapped[str] = mapped_column(String(255))
+    photo_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    thumb_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
     family: Mapped[FamilyGroup] = relationship(back_populates="homes")

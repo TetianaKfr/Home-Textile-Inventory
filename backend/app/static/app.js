@@ -21,6 +21,12 @@ function photoUrl(id, size = "thumb") {
   return `/api/photos/${id}/file?${params.toString()}`;
 }
 
+function homePhotoUrl(id, size = "thumb") {
+  const params = new URLSearchParams({ size, access_token: state.token });
+  if (state.familyId) params.set("family_id", state.familyId);
+  return `/api/homes/${id}/photo?${params.toString()}`;
+}
+
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
@@ -160,6 +166,7 @@ async function render() {
     else if (parts[0] === "locations") appEl.innerHTML = shell(await locationsView());
     else if (parts[0] === "objects" && parts[1] === "new") appEl.innerHTML = shell(await objectFormView());
     else if (parts[0] === "objects" && parts[2] === "edit") appEl.innerHTML = shell(await objectFormView(parts[1]));
+    else if (parts[0] === "objects" && parts[1] === "home" && parts[2]) appEl.innerHTML = shell(await objectsHomeView(parts[2]));
     else if (parts[0] === "objects") appEl.innerHTML = shell(await objectsView());
     else if (parts[0] === "match") appEl.innerHTML = shell(await matchView());
     else if (parts[0] === "sets") appEl.innerHTML = shell(await setsView());
@@ -665,24 +672,193 @@ async function objectFormView(id) {
     </form>`;
 }
 
-async function objectsView() {
-  const objects = await api("/api/objects");
-  return `<div class="top"><h1>Beds, tables and windows</h1>${canEdit() ? `<a class="btn" href="#/objects/new">Add object</a>` : ""}</div>
-    <div class="grid">${objects.map((obj) => `<article class="card"><div class="body"><strong>${esc(obj.name)}</strong>
-      <div class="small muted">${esc(obj.kind)}${[obj.home_name, obj.room_name].filter(Boolean).length ? ` · ${esc([obj.home_name, obj.room_name].filter(Boolean).join(" · "))}` : ""}</div>
-      <div>${esc(objectMeasures(obj))}</div>
+function comparePlaceName(left, right) {
+  const a = left || "";
+  const b = right || "";
+  if (!a && b) return 1;
+  if (a && !b) return -1;
+  return a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+}
+
+function groupObjects(objects) {
+  const homes = new Map();
+  for (const obj of objects) {
+    const homeKey = obj.home_id == null ? "" : String(obj.home_id);
+    const roomKey = obj.room_id == null ? "" : String(obj.room_id);
+    if (!homes.has(homeKey)) homes.set(homeKey, { name: obj.home_name || "", rooms: new Map() });
+    const home = homes.get(homeKey);
+    if (!home.name && obj.home_name) home.name = obj.home_name;
+    if (!home.rooms.has(roomKey)) home.rooms.set(roomKey, { name: obj.room_name || "", objects: [] });
+    const room = home.rooms.get(roomKey);
+    if (!room.name && obj.room_name) room.name = obj.room_name;
+    room.objects.push(obj);
+  }
+  return [...homes.values()]
+    .sort((a, b) => comparePlaceName(a.name, b.name))
+    .map((home) => ({
+      name: home.name,
+      rooms: [...home.rooms.values()]
+        .sort((a, b) => comparePlaceName(a.name, b.name))
+        .map((room) => ({
+          name: room.name,
+          objects: room.objects.slice().sort((a, b) => comparePlaceName(a.name, b.name) || comparePlaceName(a.kind, b.kind)),
+        })),
+    }));
+}
+
+function objectLine(obj) {
+  return `<li class="object-line">
+      <strong>${esc(obj.name)}</strong>
+      <div class="small muted">${esc(obj.kind)} · ${esc(objectMeasures(obj))}</div>
       <div class="row"><a href="#/match?object=${obj.id}">Find compatible textiles</a>
       ${canEdit() ? `<a href="#/objects/${obj.id}/edit">Change length and height</a>` : ""}</div>
-      </div></article>`).join("") || "<p>No household objects yet.</p>"}</div>`;
+    </li>`;
+}
+
+function sortObjects(list) {
+  return list.slice().sort((a, b) => comparePlaceName(a.name, b.name) || comparePlaceName(a.kind, b.kind));
+}
+
+function roomBlock(name, objects) {
+  const items = objects.length
+    ? sortObjects(objects).map(objectLine).join("")
+    : `<li class="muted small">No objects in this room.</li>`;
+  return `<li>
+      <h3>${esc(name || "No room yet")}</h3>
+      <ul class="object-list">${items}</ul>
+    </li>`;
+}
+
+function homeArt(seed) {
+  const text = String(seed || "home");
+  let n = 7;
+  for (const ch of text) n = (n * 33 + ch.charCodeAt(0)) >>> 0;
+  const walls = ["#f6f0e6", "#f4e4d4", "#e6efe4", "#eee6f3", "#e5eef3"][n % 5];
+  const roof = ["#6d4c3d", "#5d6a46", "#3e586c", "#7b5342", "#684c60"][n % 5];
+  const door = ["#2c241f", "#4a382e", "#2f4236", "#2e3c4c"][(n >>> 3) % 4];
+  const leaf = ["#8c9a78", "#c4a574", "#7f9a8a", "#b7a0c0", "#8aa0b5"][(n >>> 5) % 5];
+  const tree = 24 + (n % 30);
+  return `<svg class="home-art" viewBox="0 0 320 188" aria-hidden="true">
+      <rect width="320" height="188" fill="#f3eee6"/>
+      <rect y="132" width="320" height="56" fill="#e4d5c3"/>
+      <circle cx="${250 - (n % 30)}" cy="40" r="16" fill="#f6e7c1"/>
+      <rect x="${tree}" y="104" width="8" height="32" rx="2" fill="#6d4c3d"/>
+      <circle cx="${tree + 4}" cy="96" r="16" fill="${leaf}"/>
+      <polygon points="78,96 160,40 242,96" fill="${roof}"/>
+      <rect x="94" y="96" width="132" height="68" fill="${walls}"/>
+      <rect x="148" y="120" width="26" height="44" rx="2" fill="${door}"/>
+      <circle cx="168" cy="143" r="2" fill="#f6e7c1"/>
+      <rect x="110" y="110" width="24" height="20" fill="#f7f4ee" stroke="${roof}" stroke-width="3"/>
+      <rect x="186" y="110" width="24" height="20" fill="#f7f4ee" stroke="${roof}" stroke-width="3"/>
+      <rect x="150" y="28" width="12" height="26" fill="${roof}"/>
+    </svg>`;
+}
+
+function homePicture(board) {
+  if (board.hasPhoto) return `<img class="home-photo" src="${homePhotoUrl(board.id)}" alt="">`;
+  return homeArt(board.id + board.name);
+}
+
+function homeTile(board) {
+  return `<li><a class="home-tile" href="#/objects/home/${encodeURIComponent(board.id)}">
+      ${homePicture(board)}
+      <span class="home-tile-name">${esc(board.name)}</span>
+    </a></li>`;
+}
+
+async function loadHomeBoards() {
+  const [objects, tree] = await Promise.all([api("/api/objects"), api("/api/locations/tree")]);
+  const byHome = new Map();
+  const loose = [];
+  for (const obj of objects) {
+    if (obj.home_id == null) {
+      loose.push(obj);
+      continue;
+    }
+    const homeKey = String(obj.home_id);
+    if (!byHome.has(homeKey)) byHome.set(homeKey, new Map());
+    const rooms = byHome.get(homeKey);
+    const roomKey = obj.room_id == null ? "" : String(obj.room_id);
+    if (!rooms.has(roomKey)) rooms.set(roomKey, []);
+    rooms.get(roomKey).push(obj);
+  }
+  const knownHomes = new Set();
+  const homes = (tree.homes || []).slice().sort((a, b) => comparePlaceName(a.name, b.name));
+  const boards = homes.map((home) => {
+    const homeKey = String(home.id);
+    knownHomes.add(homeKey);
+    const roomMap = byHome.get(homeKey) || new Map();
+    const knownRooms = new Set();
+    const rooms = (home.rooms || []).slice().sort((a, b) => comparePlaceName(a.name, b.name));
+    const roomHtml = rooms.map((room) => {
+      knownRooms.add(String(room.id));
+      return roomBlock(room.name, roomMap.get(String(room.id)) || []);
+    });
+    const extraRooms = [...roomMap.entries()]
+      .filter(([roomId]) => roomId && !knownRooms.has(roomId))
+      .map(([, list]) => ({ name: (list[0] && list[0].room_name) || "", objects: list }))
+      .sort((a, b) => comparePlaceName(a.name, b.name));
+    for (const room of extraRooms) roomHtml.push(roomBlock(room.name, room.objects));
+    if (roomMap.has("")) roomHtml.push(roomBlock("", roomMap.get("")));
+    return { id: homeKey, name: home.name, hasPhoto: Boolean(home.has_photo), html: roomHtml.length ? roomHtml.join("") : `<li class="muted">No rooms yet.</li>` };
+  });
+  for (const [homeKey, roomMap] of byHome) {
+    if (knownHomes.has(homeKey)) continue;
+    const named = [...roomMap.entries()].filter(([roomId]) => roomId);
+    const first = named.flatMap(([, list]) => list)[0] || (roomMap.get("") || [])[0];
+    const roomHtml = named
+      .map(([, list]) => ({ name: (list[0] && list[0].room_name) || "", objects: list }))
+      .sort((a, b) => comparePlaceName(a.name, b.name))
+      .map((room) => roomBlock(room.name, room.objects));
+    if (roomMap.has("")) roomHtml.push(roomBlock("", roomMap.get("")));
+    boards.push({ id: homeKey, name: (first && first.home_name) || "No home yet", hasPhoto: false, html: roomHtml.join("") });
+  }
+  boards.sort((a, b) => comparePlaceName(a.name, b.name));
+  if (loose.length) boards.push({ id: "none", name: "No home yet", hasPhoto: false, html: roomBlock("", loose) });
+  return boards;
+}
+
+async function objectsView() {
+  const boards = await loadHomeBoards();
+  const add = canEdit() ? `<a class="btn" href="#/objects/new">Add object</a>` : "";
+  return `<div class="top"><h1>Beds, tables and windows</h1>${add}</div>
+    ${boards.length ? `<ul class="home-tiles">${boards.map(homeTile).join("")}</ul>` : "<p>No homes yet.</p>"}`;
+}
+
+async function objectsHomeView(id) {
+  const boards = await loadHomeBoards();
+  const board = boards.find((item) => item.id === String(id));
+  const add = canEdit() ? `<a class="btn" href="#/objects/new">Add object</a>` : "";
+  if (!board) {
+    return `<div class="top"><h1>Home not found</h1><a class="btn secondary" href="#/objects">All homes</a></div>`;
+  }
+  const photoForm = canEdit() && board.id !== "none" ? `<form id="home-photo-form" class="panel home-photo-form">
+      <div class="home-preview">${homePicture(board)}</div>
+      <p class="muted">Replace the house picture with a photograph. JPEG, PNG or WebP, up to 8 MB.</p>
+      <label>Photograph<input name="file" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" required></label>
+      <div class="row">
+        <button class="btn" type="submit">Use this photograph</button>
+        ${board.hasPhoto ? `<button class="btn secondary" type="button" id="home-photo-clear">Use the drawing</button>` : ""}
+      </div>
+      <p id="home-photo-error" class="banner error" hidden></p>
+    </form>` : "";
+  return `<div class="top"><div><a class="home-back" href="#/objects">All homes</a><h1>${esc(board.name)}</h1></div>${add}</div>
+    ${photoForm}
+    <section class="panel"><ul class="room-list">${board.html}</ul></section>`;
 }
 
 async function matchView() {
   const objects = await api("/api/objects");
   const selected = route().params.get("object") || (objects[0] && objects[0].id) || "";
+  const objectOptions = groupObjects(objects).map((home) => home.rooms.map((room) => {
+    const label = [home.name || "No home yet", room.name || "No room yet"].join(" · ");
+    const options = room.objects.map((obj) => `<option value="${obj.id}" ${String(selected) === String(obj.id) ? "selected" : ""}>${esc(obj.kind)} — ${esc(obj.name)}</option>`).join("");
+    return `<optgroup label="${esc(label)}">${options}</optgroup>`;
+  }).join("")).join("");
   return `<div class="top"><h1>Matching</h1></div>
     <p class="muted">Technical fit is decided from measurements. Color is scored separately and never turns an incompatible size into a match.</p>
     <form id="match-form" class="filters">
-      ${field("Object", `<select name="object_id">${objects.map((obj) => `<option value="${obj.id}" ${String(selected) === String(obj.id) ? "selected" : ""}>${esc(obj.kind)} — ${esc(obj.name)}</option>`).join("")}</select>`)}
+      ${field("Object", `<select name="object_id">${objectOptions}</select>`)}
       ${field("Table overhang cm", `<input name="table_overhang_cm" type="number" min="0" step="0.1" placeholder="suggestion 25">`)}
       ${field("Curtain fullness", `<input name="curtain_fullness" type="number" min="0" step="0.1" placeholder="suggestion 2">`)}
       <button class="btn" type="submit">Check compatibility</button>
@@ -803,6 +979,39 @@ function bindPage(parts) {
   if (ai) ai.onclick = suggestAi;
   const itemForm = document.getElementById("item-form");
   if (itemForm) itemForm.onsubmit = (event) => saveItem(event, false);
+  const homePhoto = document.getElementById("home-photo-form");
+  if (homePhoto && parts[0] === "objects" && parts[1] === "home" && parts[2]) {
+    const showPhotoError = (error) => {
+      const box = document.getElementById("home-photo-error");
+      if (!box) return;
+      box.hidden = false;
+      box.textContent = messageOf(error);
+    };
+    homePhoto.onsubmit = async (event) => {
+      event.preventDefault();
+      const file = homePhoto.elements.file.files[0];
+      if (!file) return;
+      const body = new FormData();
+      body.append("file", file);
+      try {
+        await api(`/api/homes/${parts[2]}/photo`, { method: "POST", body });
+        await render();
+      } catch (error) {
+        showPhotoError(error);
+      }
+    };
+    const clearPhoto = document.getElementById("home-photo-clear");
+    if (clearPhoto) {
+      clearPhoto.onclick = async () => {
+        try {
+          await api(`/api/homes/${parts[2]}/photo`, { method: "DELETE" });
+          await render();
+        } catch (error) {
+          showPhotoError(error);
+        }
+      };
+    }
+  }
   const placeForm = document.getElementById("place-form");
   if (placeForm) {
     placeForm.onsubmit = savePlace;
