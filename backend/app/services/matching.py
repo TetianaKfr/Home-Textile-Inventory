@@ -81,6 +81,37 @@ def _brief(item: Item, path, role: str, verdict: dict) -> dict:
     }
 
 
+class _HomeScoped:
+    """An inventory item limited to the units stored in one home."""
+
+    def __init__(self, item: Item, units: list):
+        self._item = item
+        self.units = units
+
+    def __getattr__(self, name):
+        return getattr(self._item, name)
+
+
+def _home_scope(homes, rooms, locations, home_id: int | None) -> tuple[set[int] | None, str]:
+    if home_id is None:
+        return None, "all homes"
+    room_ids = {room.id for room in rooms if room.home_id == home_id}
+    location_ids = {location.id for location in locations if location.room_id in room_ids}
+    home = next((home for home in homes if home.id == home_id), None)
+    return location_ids, home.name if home else "the selected home"
+
+
+def _scope_to_home(items: list, location_ids: set[int] | None) -> list:
+    if location_ids is None:
+        return items
+    scoped = []
+    for item in items:
+        units = [unit for unit in _usable_units(item) if unit.location_id in location_ids]
+        if units:
+            scoped.append(_HomeScoped(item, units))
+    return scoped
+
+
 def _load_items(db: Session, family_id: int) -> list[Item]:
     stmt = (
         select(Item)
@@ -94,14 +125,16 @@ def _by_slug(items: list[Item], slugs: set[str]) -> list[Item]:
     return [item for item in items if item.category and item.category.slug in slugs]
 
 
-def build_match(db: Session, family_id: int, obj: HouseholdObject, overrides: dict | None, preferences: dict) -> dict:
-    _, _, _, path = location_catalog(db, family_id)
+def build_match(db: Session, family_id: int, obj: HouseholdObject, overrides: dict | None, preferences: dict, home_id: int | None = None) -> dict:
+    homes, rooms, locations, path = location_catalog(db, family_id)
+    location_ids, home_label = _home_scope(homes, rooms, locations, home_id)
     items = _load_items(db, family_id)
     rules = list(db.scalars(select(CompatibilityRule).where(CompatibilityRule.family_id == family_id)))
     if rules:
         enabled = {rule.target_slug for rule in rules if rule.enabled}
         controlled = {rule.target_slug for rule in rules}
         items = [item for item in items if item.category.slug not in controlled or item.category.slug in enabled]
+    items = _scope_to_home(items, location_ids)
     target = _object_dims(obj)
     prefs = dict(preferences or {})
     if overrides:
@@ -109,10 +142,14 @@ def build_match(db: Session, family_id: int, obj: HouseholdObject, overrides: di
     overhang_default = not (overrides and overrides.get("table_overhang_cm") is not None) and target.get("overhang") is None
     fullness_default = not (overrides and overrides.get("curtain_fullness") is not None) and target.get("fullness") is None
     if obj.kind == "table":
-        return _match_table(obj, target, items, path, prefs, overhang_default)
-    if obj.kind == "window":
-        return _match_window(obj, target, items, path, prefs, fullness_default)
-    return _match_bed(obj, target, items, path, prefs, overhang_default)
+        result = _match_table(obj, target, items, path, prefs, overhang_default)
+    elif obj.kind == "window":
+        result = _match_window(obj, target, items, path, prefs, fullness_default)
+    else:
+        result = _match_bed(obj, target, items, path, prefs, overhang_default)
+    result["search_note"] = f"Textiles in this result are taken from {home_label}."
+    result["search_home_id"] = home_id
+    return result
 
 
 def _pair_visual(anchor: Item, other: Item) -> tuple[int, str]:
@@ -273,9 +310,20 @@ def _match_bed(obj, target, items, path, prefs, overhang_default) -> dict:
             for duvet in duvets[:3]
         ]
 
-    pillows = _by_slug(items, {"pillow"})
+    pillow_sizes = _bed_pillow_sizes(obj)
     cases = _by_slug(items, {"pillowcase"})
-    pillow_plan = _assign_pillows(pillows, cases, path, prefs, rejected)
+    pillow_plan = _assign_bed_pillows(pillow_sizes, cases, path, prefs, rejected)
+    guards = _assign_bed_pillows(
+        pillow_sizes,
+        _by_slug(items, {"pillow-protector"}),
+        path,
+        prefs,
+        rejected,
+        role="pillow_protector",
+        category="Pillow protector",
+        piece="pillow protector",
+        optional=True,
+    )
 
     sheets.sort(key=lambda row: (-RANK[row["technical"]["status"]], -row["technical"]["score"]))
     protectors.sort(key=lambda row: (-RANK[row["technical"]["status"]], -row["technical"]["score"]))
@@ -304,9 +352,7 @@ def _match_bed(obj, target, items, path, prefs, overhang_default) -> dict:
                     visual_bits.append(duvet_pair["visual_text"])
                 if duvet_pair.get("missing_cover"):
                     missing.append({"category": "Duvet cover", "reason": "No compatible duvet cover was found.", "required": duvet_pair["rows"][0]["dimensions"]})
-            if pillow_plan["missing"]:
-                missing.extend(pillow_plan["missing"])
-            else:
+            if pillow_plan["rows"]:
                 parts.extend(pillow_plan["rows"])
                 if pillow_plan["status"]:
                     statuses.append(pillow_plan["status"])
@@ -314,6 +360,14 @@ def _match_bed(obj, target, items, path, prefs, overhang_default) -> dict:
                     visuals.append(pillow_plan["visual"])
                 if pillow_plan["visual_text"]:
                     visual_bits.append(pillow_plan["visual_text"])
+            if pillow_plan["missing"]:
+                missing.extend(pillow_plan["missing"])
+            if guards["rows"]:
+                parts.extend(guards["rows"])
+                if guards["status"]:
+                    statuses.append(guards["status"])
+            if guards["missing"]:
+                missing.extend(guards["missing"])
             if protectors:
                 parts.append(protectors[0])
                 statuses.append(protectors[0]["technical"]["status"])
@@ -362,7 +416,7 @@ def _match_bed(obj, target, items, path, prefs, overhang_default) -> dict:
         unique.append(row)
         if len(unique) == 6:
             break
-    top_missing = list(unique[0]["missing"]) if unique else []
+    top_missing = list(unique[0]["missing"]) if unique else list(pillow_plan["missing"]) + list(guards["missing"])
     if not sheets and not any(entry.get("category") == "Sheet" for entry in top_missing):
         top_missing.append(
             {
@@ -374,69 +428,98 @@ def _match_bed(obj, target, items, path, prefs, overhang_default) -> dict:
     return _envelope(obj, unique, rejected[:12], top_missing, prefs)
 
 
-def _assign_pillows(pillows, cases, path, prefs, rejected) -> dict:
-    if not pillows:
-        return {"rows": [], "status": None, "visual": None, "visual_text": "", "missing": []}
-    needed = sum(len(_usable_units(pillow)) or 1 for pillow in pillows)
-    assignments = [
-        _brief(
-            pillow,
-            path,
-            "pillow",
-            {"status": "exact", "score": 100, "explanation": "Pillow from the inventory.", "discrepancies": [], "warnings": [], "rotated": False},
-        )
-        for pillow in pillows
-    ]
-    statuses = []
-    visuals = []
-    texts = []
-    remaining = {case.id: len(_usable_units(case)) or 1 for case in cases}
-    for pillow in pillows:
-        copies = len(_usable_units(pillow)) or 1
-        for _ in range(copies):
-            best = None
-            for case in cases:
-                if remaining.get(case.id, 0) <= 0:
-                    continue
-                verdict = match_pillowcase(_attrs(pillow), _attrs(case), prefs)
-                if verdict.status == "incompatible":
-                    continue
-                visual, text = _pair_visual(pillow, case)
-                rank = (RANK[verdict.status], visual, verdict.score)
-                if best is None or rank > best[0]:
-                    best = (rank, case, verdict, visual, text)
-            if best is None:
-                break
-            _, case, verdict, visual, text = best
-            remaining[case.id] -= 1
-            assignments.append(_brief(case, path, "pillowcase", verdict.as_dict()))
-            statuses.append(verdict.status)
-            visuals.append(visual)
-            texts.append(text)
-    # Record incompatible cases once for transparency.
-    for case in cases:
-        if any(match_pillowcase(_attrs(pillow), _attrs(case), prefs).status != "incompatible" for pillow in pillows):
+def _bed_pillow_sizes(obj: HouseholdObject) -> list[dict]:
+    """Pillow sizes stored on this bed. A mattress has none."""
+    if obj.kind != "bed":
+        return []
+    sizes = []
+    for entry in (obj.attributes or {}).get("pillows") or []:
+        if not isinstance(entry, dict):
             continue
-        verdict = match_pillowcase(_attrs(pillows[0]), _attrs(case), prefs)
-        rejected.append(_brief(case, path, "pillowcase", verdict.as_dict()))
-    found = len([row for row in assignments if row["role"] == "pillowcase"])
+        width = usable_measure(entry.get("width"))
+        length = usable_measure(entry.get("length"))
+        if width is None or length is None:
+            continue
+        sizes.append({"width": width, "length": length})
+    return sizes
+
+
+def _assign_bed_pillows(
+    pillow_sizes,
+    cases,
+    path,
+    prefs,
+    rejected,
+    role: str = "pillowcase",
+    category: str = "Pillowcase",
+    piece: str = "pillowcase",
+    optional: bool = False,
+) -> dict:
+    """Each usable unit covers one bed pillow. Only an exact size counts."""
+    if not pillow_sizes:
+        return {"rows": [], "status": None, "visual": None, "visual_text": "", "missing": []}
+    remaining = {case.id: len(_usable_units(case)) for case in cases}
+    assignments = []
+    statuses = []
+    missing_sizes: list[list] = []
+    for index, pillow in enumerate(pillow_sizes, start=1):
+        best = None
+        for case in cases:
+            if remaining.get(case.id, 0) <= 0:
+                continue
+            verdict = match_pillowcase(pillow, _attrs(case), prefs)
+            if verdict.status != "exact":
+                continue
+            rank = (RANK[verdict.status], verdict.score)
+            if best is None or rank > best[0]:
+                best = (rank, case, verdict)
+        if best is None:
+            _count_missing(missing_sizes, pillow["width"], pillow["length"])
+            continue
+        _, case, verdict = best
+        remaining[case.id] -= 1
+        technical = verdict.as_dict()
+        label = size_label(pillow["width"], pillow["length"])
+        technical["explanation"] = f"{technical['explanation']} Bed pillow {index}: {label}."
+        assignments.append(_brief(case, path, role, technical))
+        statuses.append(verdict.status)
+    for case in cases:
+        verdicts = [match_pillowcase(pillow, _attrs(case), prefs) for pillow in pillow_sizes]
+        if any(verdict.status != "incompatible" for verdict in verdicts):
+            continue
+        technical = verdicts[0].as_dict()
+        technical["explanation"] = f"The {piece} does not fit any pillow size on this bed."
+        rejected.append(_brief(case, path, role, technical))
     missing = []
-    if found < needed:
-        sample = _attrs(pillows[0])
+    for width, length, count in missing_sizes:
+        if count == 1:
+            reason = f"1 suitable {piece} is still missing."
+        else:
+            reason = f"{count} suitable {piece}s are still missing."
+        if optional:
+            reason += " This piece is optional."
         missing.append(
             {
-                "category": "Pillowcase",
-                "reason": f"{needed - found} suitable pillowcase(s) are still missing.",
-                "required": size_label(sample.get("width"), sample.get("length")),
+                "category": category,
+                "reason": reason,
+                "required": size_label(width, length),
             }
         )
     return {
         "rows": assignments,
         "status": worst_status(statuses) if statuses else None,
-        "visual": round(sum(visuals) / len(visuals)) if visuals else None,
-        "visual_text": " ".join(texts),
+        "visual": None,
+        "visual_text": "",
         "missing": missing,
     }
+
+
+def _count_missing(rows: list[list], width: float, length: float) -> None:
+    for row in rows:
+        if row[0] == width and row[1] == length:
+            row[2] += 1
+            return
+    rows.append([width, length, 1])
 
 
 def _envelope(obj: HouseholdObject, combinations, rejected, missing, prefs) -> dict:

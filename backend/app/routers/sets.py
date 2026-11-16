@@ -23,6 +23,7 @@ class MatchIn(BaseModel):
     duvet_tolerance_cm: float | None = None
     pillow_allowance_cm: float | None = None
     curtain_fullness: float | None = None
+    home_id: int | None = None
 
 
 class SetIn(BaseModel):
@@ -38,9 +39,13 @@ def match(payload: MatchIn, ctx: Context = Depends(get_context)):
     obj = ctx.db.get(HouseholdObject, payload.object_id)
     if obj is None or obj.archived or obj.family_id != ctx.family.id:
         raise HTTPException(status_code=404, detail="Object not found")
-    overrides = payload.model_dump(exclude={"object_id"}, exclude_none=True)
+    if payload.home_id is not None:
+        homes, _, _, _ = location_catalog(ctx.db, ctx.family.id)
+        if not any(home.id == payload.home_id for home in homes):
+            raise HTTPException(status_code=404, detail="Home not found")
+    overrides = payload.model_dump(exclude={"object_id", "home_id"}, exclude_none=True)
     preferences = {**(ctx.family.preferences or {})}
-    return build_match(ctx.db, ctx.family.id, obj, overrides, preferences)
+    return build_match(ctx.db, ctx.family.id, obj, overrides, preferences, payload.home_id)
 
 
 @router.get("/sets")

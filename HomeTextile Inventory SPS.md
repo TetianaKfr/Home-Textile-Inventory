@@ -9,7 +9,7 @@
 
 Source: `Home Textile Inventory SRS.pdf`
 
-The rules below follow the current application. Search and filters live on the inventory. Each physical unit keeps its own place. A room or storage location that still holds items cannot be deleted. A negative measurement is never treated as a size.
+The rules below follow the current application. Search and filters live on the inventory. Each physical unit keeps its own place. A room or storage location that still holds items cannot be deleted. A negative measurement is never treated as a size. Each home can have one photograph. A bed can record up to four pillow sizes. Beds, tables, and windows are listed by home, then by room, then by name.
 
 ## 1. Project Overview
 
@@ -490,9 +490,12 @@ Fields:
 - Mattress width.
 - Mattress length.
 - Mattress depth or height.
+- Up to four optional pillow sizes, for a bed only. Each size is a width and a length in centimetres. A size may record width, length, or both. A blank size is not stored, and sizes after the last filled one are dropped. More than four sizes are rejected. Width and length must be zero or more.
 - Photographs.
 - Home and room location.
 - Notes.
+
+A mattress does not keep pillow sizes.
 
 ### 6.12. Tables
 
@@ -551,6 +554,19 @@ For curtain matching, the application must also support:
 
 Window dimensions and curtain rail dimensions must be stored separately.
 
+### 6.14. Household object form and list
+
+The form shows only the measurements that belong to the selected type. Fields for another type are hidden and are not saved.
+
+- Bed: sleeping width, sleeping length, mattress depth, and up to four pillow sizes. Pillow sizes are optional.
+- Mattress: width, length, and depth.
+- Table: shape, width, length, diameter, height, and preferred overhang.
+- Window: width, height, curtain rail width, desired curtain length, fullness ratio, and attachment.
+
+Beds, tables, and windows are grouped by home, then by room. Homes, rooms, and objects are ordered by name. The comparison ignores letter case and compares numbers as numbers. A place with no name comes after named places. Objects that have no home are shown together after the homes. Inside a room, objects that share a name are ordered by type.
+
+The same home, room, then name order is used when these objects are listed for matching.
+
 ## 7. Photographs and Image Management
 
 ### 7.1. Multiple Photographs
@@ -603,6 +619,16 @@ The application should clearly distinguish between:
 - AI-generated suggestions.
 - Unknown information.
 
+### 7.3. Home photograph
+
+Each home can have one photograph. An editor can replace it or remove it.
+
+Accepted files are JPEG, PNG, and WebP, up to 8 MB. The application stores a display image and a smaller thumbnail. A file that is not a photograph is rejected.
+
+A home without a photograph is shown with a generated drawing. Removing the photograph brings that drawing back. Objects gathered under “no home” have no photograph.
+
+Changing or removing the photograph is recorded in the audit history. Deleting a home removes its photograph files.
+
 ## 8. Storage and Location Management
 
 The application must support an unlimited or practically unrestricted number of homes and storage locations, subject to the chosen infrastructure limits.
@@ -645,7 +671,7 @@ Users must be able to:
 
 The system must retain a history of item movements.
 
-An editor can delete a room or a storage location. Deleting a home stays limited to an administrator.
+An editor can delete a room or a storage location. Deleting a home stays limited to an administrator. Deleting a home also removes its photograph.
 
 A room that still holds an active item cannot be deleted. The application asks the user to move the items out first. When the room no longer holds items, deleting it archives the room and every storage location inside it, and clears that room from beds, tables, and windows that used it.
 
@@ -1065,7 +1091,7 @@ The application should display the missing category and the required dimensions.
 
 ### 12.11. Measurements and place checks
 
-A negative width, length, height, diameter, depth, overhang, rail width, desired curtain length, or fullness is rejected when a bed, mattress, table, or window is saved. The interface does not keep a negative number. Zero is allowed. An empty optional measurement is not stored.
+A negative width, length, height, diameter, depth, overhang, rail width, desired curtain length, fullness, or pillow size is rejected when a bed, mattress, table, or window is saved. The interface does not keep a negative number. Zero is allowed. An empty optional measurement is not stored.
 
 Compatibility treats a negative measurement as missing. If a table has no usable width and length, or no usable diameter when it is round, the required tablecloth size asks for the table length and width. If a window has no usable rail width or window width, or no usable fullness, the required curtain width asks for the window width and the curtain length.
 
@@ -1190,7 +1216,7 @@ A recommended initial data model includes:
 | Users | User accounts and profile information |
 | FamilyGroups | Shared household groups |
 | FamilyGroupMembers | Membership and role assignments |
-| Homes | Houses or apartments |
+| Homes | Houses or apartments, each with an optional photograph |
 | Rooms | Rooms within homes |
 | StorageLocations | Cupboards, shelves, drawers, boxes, and other locations |
 | Categories | Inventory categories |
@@ -1516,6 +1542,10 @@ The initial application should not be considered complete until the following re
 - A negative measurement is not saved and is not used as a size.
 - A room chosen for a bed, mattress, table, or window belongs to the selected home.
 - A QR code is shown only for a box.
+- A bed stores at most four optional pillow sizes, and those sizes are not kept on another object type.
+- The object form shows only the measurements for the selected type.
+- Beds, tables, and windows are listed by home, then room, then name.
+- An editor can add or remove one photograph per home. A home without a photograph shows a drawing.
 
 ### 22.6. Synchronization
 

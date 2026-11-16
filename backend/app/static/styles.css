@@ -83,6 +83,9 @@ h1, h2, h3 { font-family: Georgia, serif; font-weight: 500; margin: 0 0 8px; }
   box-shadow: var(--shadow);
 }
 .card { overflow: hidden; }
+a.card-link { display: block; color: inherit; text-decoration: none; }
+a.card-link strong { text-decoration: underline; }
+.card-actions { padding: 0 16px 14px; }
 .card img, .ph {
   width: 100%;
   height: 160px;
@@ -129,7 +132,7 @@ textarea { min-height: 80px; }
 }
 .btn.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
 .filters > .btn { width: auto; justify-self: start; align-self: center; }
-.filters > .banner { grid-column: 1 / -1; }
+.filters > .banner, #object-kind-hint { grid-column: 1 / -1; }
 .bed-pillows {
   grid-column: 1 / -1;
   display: grid;

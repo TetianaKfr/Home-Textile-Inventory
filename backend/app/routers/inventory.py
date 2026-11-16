@@ -82,6 +82,8 @@ class ItemUpdate(BaseModel):
     attributes: dict | None = None
     field_sources: dict | None = None
     dimension_text: str | None = None
+    quantity: int | None = Field(default=None, ge=1, le=200)
+    added_unit_location_id: int | None = None
 
 
 class UnitIn(BaseModel):
@@ -128,6 +130,26 @@ def _load_item(ctx: Context, item_id: int) -> Item:
 def _path(ctx: Context):
     _, _, _, path = location_catalog(ctx.db, ctx.family.id)
     return path
+
+
+def _set_quantity(ctx: Context, item: Item, quantity: int, location_id: int | None, use_sent_location: bool) -> tuple[int, int] | None:
+    active = sorted((unit for unit in item.units if not unit.archived), key=lambda unit: unit.id)
+    current = len(active)
+    if quantity == current:
+        return None
+    if quantity > current:
+        template = active[0] if active else None
+        place = location_id if use_sent_location else (template.location_id if template else None)
+        status = template.status if template and template.status in STATUSES else "available"
+        _check_location(ctx, place)
+        for _ in range(quantity - current):
+            unit = ItemUnit(item_id=item.id, location_id=place, status=status)
+            ctx.db.add(unit)
+            item.units.append(unit)
+    else:
+        for unit in active[quantity:]:
+            unit.archived = True
+    return current, quantity
 
 
 def _check_location(ctx: Context, location_id: int | None) -> None:
@@ -483,6 +505,9 @@ def update_item(item_id: int, payload: ItemUpdate, ctx: Context = Depends(requir
     before = _snapshot(item)
     data = payload.model_dump(exclude_unset=True)
     data.pop("version", None)
+    quantity = data.pop("quantity", None)
+    place_for_new_units = data.pop("added_unit_location_id", None)
+    place_was_sent = "added_unit_location_id" in payload.model_fields_set
     dimension_text = data.pop("dimension_text", None)
     if "category_id" in data and data["category_id"] is not None:
         _category_or_404(ctx, data["category_id"])
@@ -500,6 +525,15 @@ def update_item(item_id: int, payload: ItemUpdate, ctx: Context = Depends(requir
         if key == "secondary_colors" and value is not None:
             value = [color.strip().lower() for color in value if color.strip()]
         setattr(item, key, value)
+    quantity_change = None
+    if quantity is not None:
+        quantity_change = _set_quantity(
+            ctx,
+            item,
+            quantity,
+            place_for_new_units if place_was_sent else None,
+            place_was_sent,
+        )
     item.version += 1
     item.updated_at = datetime.now(timezone.utc)
     after = _snapshot(item)
@@ -507,6 +541,23 @@ def update_item(item_id: int, payload: ItemUpdate, ctx: Context = Depends(requir
     if changed:
         add_history(ctx.db, ctx.family.id, ctx.user.id, "updated", item.id, previous=before, new=after)
         notify_family(ctx.db, ctx.family.id, ctx.user.id, f"{ctx.user.full_name} updated {item.name}.")
+    if quantity_change is not None:
+        previous_quantity, next_quantity = quantity_change
+        add_history(
+            ctx.db,
+            ctx.family.id,
+            ctx.user.id,
+            "quantity_changed",
+            item.id,
+            previous={"quantity": previous_quantity},
+            new={"quantity": next_quantity},
+        )
+        notify_family(
+            ctx.db,
+            ctx.family.id,
+            ctx.user.id,
+            f"{ctx.user.full_name} changed the quantity of {item.name} to {next_quantity}.",
+        )
     ctx.db.commit()
     return item_dict(_load_item(ctx, item.id), _path(ctx))
 

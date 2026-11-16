@@ -129,8 +129,8 @@ function shell(content) {
     </div>`;
 }
 
-function field(label, html) {
-  return `<label>${esc(label)}${html}</label>`;
+function field(label, html, extra) {
+  return `<label${extra ? ` ${extra}` : ""}>${esc(label)}${html}</label>`;
 }
 
 async function render() {
@@ -276,15 +276,22 @@ function cards(items) {
     const photo = item.photos && item.photos[0];
     const place = item.units && item.units[0] ? placeLabel(item.units[0]) : "No location";
     const status = item.units && item.units[0] ? item.units[0].status : "";
-    return `<a class="card" href="#/items/${item.id}">
-      ${photo ? `<img src="${photoUrl(photo.id)}" alt="">` : `<div class="ph">No photo</div>`}
-      <div class="body">
-        <strong>${esc(item.name)}</strong>
-        <div class="small muted">${esc(item.category ? item.category.name : "")}</div>
-        <div class="small">${esc(item.dimensions_label)} · ${esc(item.primary_color || "color unknown")}</div>
-        <div class="row"><span class="pill ${esc(status)}">${esc((status || "no status").replaceAll("_", " "))}</span><span class="small">${esc(place)}</span></div>
-      </div>
-    </a>`;
+    const remove = canEdit()
+      ? `<button class="btn warn tiny" type="button" data-delete-item="${item.id}" data-item-name="${esc(item.name)}">Delete</button>`
+      : "";
+    return `<article class="card">
+      <a class="card-link" href="#/items/${item.id}">
+        ${photo ? `<img src="${photoUrl(photo.id)}" alt="">` : `<div class="ph">No photo</div>`}
+        <div class="body">
+          <strong>${esc(item.name)}</strong>
+          <div class="small muted">${esc(item.category ? item.category.name : "")}</div>
+          <div class="small">${esc(item.dimensions_label)} · ${esc(item.primary_color || "color unknown")}</div>
+          <div class="small">Quantity ${Number(item.quantity) || 0}</div>
+          <div class="row"><span class="pill ${esc(status)}">${esc((status || "no status").replaceAll("_", " "))}</span><span class="small">${esc(place)}</span></div>
+        </div>
+      </a>
+      ${remove ? `<div class="card-actions">${remove}</div>` : ""}
+    </article>`;
   }).join("")}</div>`;
 }
 
@@ -348,7 +355,7 @@ async function itemDetailView(id) {
   const sources = item.field_sources || {};
   const sourceNote = (key) => sources[key] === "ai" ? ` <span class="pill possible">AI suggestion, unconfirmed</span>` : "";
   return `<div class="top"><div><h1>${esc(item.name)}</h1><p class="muted">${esc(item.category ? item.category.name : "")}</p></div>
-    <div class="row">${canEdit() ? `<a class="btn" href="#/items/${item.id}/edit">Edit</a>` : ""}</div></div>
+    <div class="row">${canEdit() ? `<a class="btn" href="#/items/${item.id}/edit">Edit</a><button class="btn warn" type="button" data-delete-item="${item.id}" data-item-name="${esc(item.name)}">Delete</button>` : ""}</div></div>
     <div class="split">
       <section>
         <div class="gallery">${item.photos.map((photo) => `<img src="${photoUrl(photo.id, "full")}" alt="">`).join("") || `<div class="ph">No photograph</div>`}</div>
@@ -404,7 +411,7 @@ async function itemFormView(id) {
       ${field("Season", `<input name="seasonality" list="seasons" value="${esc(existing ? existing.seasonality : "")}">`)}
       ${field("Description", `<textarea name="description">${esc(existing ? existing.description : "")}</textarea>`)}
       ${field("Notes", `<textarea name="notes">${esc(existing ? existing.notes : "")}</textarea>`)}
-      ${existing ? "" : field("Quantity", `<input name="quantity" type="number" min="1" value="1">`)}
+      ${field("Quantity", `<input name="quantity" type="number" min="1" max="200" step="1" required value="${existing ? existing.quantity : 1}">`)}
       ${existing ? "" : field("Status", `<select name="unit_status">${state.meta.statuses.map((s) => `<option>${esc(s)}</option>`).join("")}</select>`)}
       <input type="hidden" name="version" value="${existing ? existing.version : 1}">
       <button class="btn" type="submit">${existing ? "Save changes" : "Save item"}</button>
@@ -645,9 +652,24 @@ function syncObjectPlace() {
 
 function syncObjectKind() {
   const form = document.getElementById("object-form");
-  const pillows = form && form.querySelector("[data-bed-pillows]");
-  if (!pillows || !form.elements.kind) return;
-  pillows.hidden = form.elements.kind.value !== "bed";
+  if (!form || !form.elements.kind) return;
+  const kind = form.elements.kind.value;
+  form.querySelectorAll("[data-kinds]").forEach((node) => {
+    const visible = node.dataset.kinds.split(/\s+/).includes(kind);
+    node.hidden = !visible;
+    node.querySelectorAll("input, select, textarea").forEach((input) => {
+      input.disabled = !visible;
+    });
+  });
+  const hint = document.getElementById("object-kind-hint");
+  if (hint) {
+    hint.textContent = {
+      bed: "Enter the sleeping width and length, and the mattress depth. Pillow sizes are optional.",
+      mattress: "Enter the mattress width, length and depth.",
+      table: "Choose the shape, then enter the width, length or diameter, the height and the preferred overhang.",
+      window: "Enter the window width and height, then the curtain rail, length, fullness and attachment.",
+    }[kind] || "";
+  }
 }
 
 async function objectFormView(id) {
@@ -673,29 +695,30 @@ async function objectFormView(id) {
     return field(`Pillow ${n} width cm`, measureInput(`pillow_${n}_width`, pillow.width))
       + field(`Pillow ${n} length cm`, measureInput(`pillow_${n}_length`, pillow.length));
   }).join("");
+  const only = (kinds) => `data-kinds="${kinds}"${kinds.split(" ").includes(kind) ? "" : " hidden"}`;
   return `<div class="top"><h1>${existing ? "Change length and height" : "Add a household object"}</h1></div>
     <form id="object-form" class="panel filters">
-      <p class="muted">Choose the home and the room from the lists. Type the length, height, diameter, mattress depth, curtain rail width and desired curtain length. For a bed, pillow sizes are optional: fill up to 4, or leave every pillow field empty. A negative number cannot be entered.</p>
+      <p class="muted" id="object-kind-hint"></p>
       ${existing ? `<input type="hidden" name="object_id" value="${existing.id}">` : ""}
       ${field("Type", `<select name="kind">${kinds.map(([value, label]) => `<option value="${value}" ${kind === value ? "selected" : ""}>${label}</option>`).join("")}</select>`)}
       ${field("Name", `<input name="name" required value="${esc(existing ? existing.name : "")}">`)}
       ${field("Home", `<select name="home_id"><option value="">No home yet</option>${homes.map((home) => `<option value="${home.id}" ${String(home.id) === homeId ? "selected" : ""}>${esc(home.name)}</option>`).join("")}</select>`)}
       ${field("Room", `<select name="room_id" data-selected="${esc(roomId)}"></select>`)}
-      ${field("Shape", `<select name="shape">${shapes.map(([value, label]) => `<option value="${esc(value)}" ${shape === value ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>`)}
-      ${field("Width cm", measureInput("width", existing && existing.width))}
-      ${field("Length cm", measureInput("length", existing && existing.length))}
-      ${field("Height cm", measureInput("height", existing && existing.height))}
-      ${field("Diameter cm", measureInput("diameter", existing && existing.diameter))}
-      ${field("Mattress depth cm", measureInput("depth", existing && existing.depth))}
-      <div class="bed-pillows" data-bed-pillows ${kind === "bed" ? "" : "hidden"}>
+      ${field("Shape", `<select name="shape">${shapes.map(([value, label]) => `<option value="${esc(value)}" ${shape === value ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>`, only("table"))}
+      ${field("Width cm", measureInput("width", existing && existing.width), only("bed mattress table window"))}
+      ${field("Length cm", measureInput("length", existing && existing.length), only("bed mattress table"))}
+      ${field("Height cm", measureInput("height", existing && existing.height), only("table window"))}
+      ${field("Diameter cm", measureInput("diameter", existing && existing.diameter), only("table"))}
+      ${field("Mattress depth cm", measureInput("depth", existing && existing.depth), only("bed mattress"))}
+      <div class="bed-pillows" data-bed-pillows ${only("bed")}>
         <p class="muted">Pillow sizes, optional. Width and length in centimetres. Leave a pillow blank if the bed does not need it.</p>
         ${pillowFields}
       </div>
-      ${field("Curtain rail width", measureInput("rail_width", attrs.rail_width))}
-      ${field("Desired curtain length", measureInput("desired_length", attrs.desired_length))}
-      ${field("Fullness ratio", measureInput("fullness", attrs.fullness))}
-      ${field("Attachment", `<input name="attachment" placeholder="eyelets" value="${esc(attrs.attachment || "")}">`)}
-      ${field("Preferred table overhang cm", measureInput("overhang", attrs.overhang))}
+      ${field("Curtain rail width", measureInput("rail_width", attrs.rail_width), only("window"))}
+      ${field("Desired curtain length", measureInput("desired_length", attrs.desired_length), only("window"))}
+      ${field("Fullness ratio", measureInput("fullness", attrs.fullness), only("window"))}
+      ${field("Attachment", `<input name="attachment" placeholder="eyelets" value="${esc(attrs.attachment || "")}">`, only("window"))}
+      ${field("Preferred table overhang cm", measureInput("overhang", attrs.overhang), only("table"))}
       ${field("Notes", `<textarea name="notes">${esc(existing ? existing.notes : "")}</textarea>`)}
       <button class="btn" type="submit">${existing ? "Save measurements" : "Save object"}</button>
       <p id="object-error" class="banner error" hidden></p>
@@ -878,17 +901,22 @@ async function objectsHomeView(id) {
 }
 
 async function matchView() {
-  const objects = await api("/api/objects");
+  const [objects, tree] = await Promise.all([api("/api/objects"), api("/api/locations/tree")]);
   const selected = route().params.get("object") || (objects[0] && objects[0].id) || "";
+  const homes = [...(tree.homes || [])].sort((a, b) => a.name.localeCompare(b.name));
   const objectOptions = groupObjects(objects).map((home) => home.rooms.map((room) => {
     const label = [home.name || "No home yet", room.name || "No room yet"].join(" · ");
     const options = room.objects.map((obj) => `<option value="${obj.id}" ${String(selected) === String(obj.id) ? "selected" : ""}>${esc(obj.kind)} — ${esc(obj.name)}</option>`).join("");
     return `<optgroup label="${esc(label)}">${options}</optgroup>`;
   }).join("")).join("");
+  const homeOptions = [`<option value="">All homes</option>`].concat(
+    homes.map((home) => `<option value="${home.id}">${esc(home.name)}</option>`),
+  ).join("");
   return `<div class="top"><h1>Matching</h1></div>
     <p class="muted">Technical fit is decided from measurements. Color is scored separately and never turns an incompatible size into a match.</p>
     <form id="match-form" class="filters">
       ${field("Object", `<select name="object_id">${objectOptions}</select>`)}
+      ${field("Search in", `<select name="home_id">${homeOptions}</select>`)}
       ${field("Table overhang cm", `<input name="table_overhang_cm" type="number" min="0" step="0.1" placeholder="suggestion 25">`)}
       ${field("Curtain fullness", `<input name="curtain_fullness" type="number" min="0" step="0.1" placeholder="suggestion 2">`)}
       <button class="btn" type="submit">Check compatibility</button>
@@ -900,7 +928,8 @@ function renderMatch(result) {
   const combos = result.combinations || [];
   const missing = result.missing || [];
   const rejected = result.rejected || [];
-  return `<p class="banner">${esc(result.preference_note || "")}</p>
+  return `${result.search_note ? `<p class="banner">${esc(result.search_note)}</p>` : ""}
+    <p class="banner">${esc(result.preference_note || "")}</p>
     ${missing.map((row) => `<p class="banner">Missing ${esc(row.category)}: ${esc(row.reason)} Required: ${esc(row.required || "")}</p>`).join("")}
     ${combos.map((combo, index) => `<article class="panel combo">
       <h2>Combination ${index + 1}</h2>
@@ -1096,6 +1125,21 @@ function bindPage(parts) {
       }
     };
   });
+  document.querySelectorAll("[data-delete-item]").forEach((button) => {
+    button.onclick = async () => {
+      if (!confirm(`Delete ${button.dataset.itemName}?`)) return;
+      try {
+        await api("/api/items/" + button.dataset.deleteItem + "/archive", { method: "POST" });
+        if (route().parts[0] === "items") go("#/inventory");
+        else render();
+      } catch (err) {
+        const box = document.createElement("p");
+        box.className = "banner error";
+        box.textContent = messageOf(err);
+        button.closest(".card, .top")?.prepend(box);
+      }
+    };
+  });
   document.querySelectorAll("[data-delete-home]").forEach((button) => {
     button.onclick = async () => {
       if (!confirm(`Delete ${button.dataset.homeName}? Its rooms disappear from the list.`)) return;
@@ -1182,10 +1226,16 @@ async function saveItem(event, acknowledge) {
   const payload = collectItem(form, acknowledge);
   const existing = window.__formCache.existing;
   try {
+    if (existing) {
+      const units = existing.units || [];
+      const first = units[0];
+      const input = first ? form.elements[`unit_location_${first.id}`] : form.elements.location_id;
+      payload.added_unit_location_id = input && input.value ? Number(input.value) : null;
+    }
     const saved = existing
       ? await api("/api/items/" + existing.id, { method: "PATCH", body: payload })
       : await api("/api/items", { method: "POST", body: payload });
-    if (existing) await saveUnitLocations(form, existing);
+    if (existing) await saveUnitLocations(form, existing, new Set((saved.units || []).map((unit) => unit.id)));
     const file = document.getElementById("ai-file");
     if (file && file.files[0]) {
       const body = new FormData();
@@ -1207,8 +1257,9 @@ async function saveItem(event, acknowledge) {
   }
 }
 
-async function saveUnitLocations(form, existing) {
+async function saveUnitLocations(form, existing, liveIds) {
   for (const unit of existing.units || []) {
+    if (liveIds && !liveIds.has(unit.id)) continue;
     const input = form.elements[`unit_location_${unit.id}`];
     if (!input) continue;
     const next = input.value ? Number(input.value) : null;
@@ -1359,6 +1410,7 @@ async function runMatch(event) {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target).entries());
   const body = { object_id: Number(data.object_id) };
+  if (data.home_id) body.home_id = Number(data.home_id);
   if (data.table_overhang_cm) body.table_overhang_cm = Number(data.table_overhang_cm);
   if (data.curtain_fullness) body.curtain_fullness = Number(data.curtain_fullness);
   lastMatch = await api("/api/matching", { method: "POST", body });
