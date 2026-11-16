@@ -130,6 +130,14 @@ textarea { min-height: 80px; }
 .btn.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
 .filters > .btn { width: auto; justify-self: start; align-self: center; }
 .filters > .banner { grid-column: 1 / -1; }
+.bed-pillows {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+.bed-pillows[hidden] { display: none; }
+.bed-pillows > .muted { grid-column: 1 / -1; margin: 0; }
 .btn.warn { background: var(--bad); }
 .btn.edit-only { display: none; }
 .home-card:has([data-home-editor]:not([hidden])) .btn.edit-only { display: inline-flex; justify-self: start; width: 76px; justify-content: center; }

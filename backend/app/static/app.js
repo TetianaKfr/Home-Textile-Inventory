@@ -611,6 +611,19 @@ function objectMeasures(obj) {
   const attrs = obj.attributes || {};
   add("rail", attrs.rail_width);
   add("curtain length", attrs.desired_length);
+  if (obj.kind === "bed" && Array.isArray(attrs.pillows)) {
+    attrs.pillows.forEach((pillow, index) => {
+      if (!pillow || typeof pillow !== "object") return;
+      const width = Number(pillow.width);
+      const length = Number(pillow.length);
+      const hasWidth = pillow.width != null && pillow.width !== "" && Number.isFinite(width) && width >= 0;
+      const hasLength = pillow.length != null && pillow.length !== "" && Number.isFinite(length) && length >= 0;
+      const text = (number) => (Number.isInteger(number) ? String(number) : String(Math.round(number * 10) / 10));
+      if (hasWidth && hasLength) bits.push(`pillow ${index + 1} ${text(width)} × ${text(length)} cm`);
+      else if (hasWidth) bits.push(`pillow ${index + 1} width ${text(width)} cm`);
+      else if (hasLength) bits.push(`pillow ${index + 1} length ${text(length)} cm`);
+    });
+  }
   return bits.join(" · ") || "Enter the length and height";
 }
 
@@ -630,6 +643,13 @@ function syncObjectPlace() {
   form.elements.room_id.dataset.selected = "";
 }
 
+function syncObjectKind() {
+  const form = document.getElementById("object-form");
+  const pillows = form && form.querySelector("[data-bed-pillows]");
+  if (!pillows || !form.elements.kind) return;
+  pillows.hidden = form.elements.kind.value !== "bed";
+}
+
 async function objectFormView(id) {
   let existing = null;
   if (id) {
@@ -647,9 +667,15 @@ async function objectFormView(id) {
   const homeId = existing && existing.home_id != null ? String(existing.home_id) : "";
   const roomId = existing && existing.room_id != null ? String(existing.room_id) : "";
   const homes = tree.homes || [];
+  const pillows = Array.isArray(attrs.pillows) ? attrs.pillows : [];
+  const pillowFields = [1, 2, 3, 4].map((n) => {
+    const pillow = pillows[n - 1] || {};
+    return field(`Pillow ${n} width cm`, measureInput(`pillow_${n}_width`, pillow.width))
+      + field(`Pillow ${n} length cm`, measureInput(`pillow_${n}_length`, pillow.length));
+  }).join("");
   return `<div class="top"><h1>${existing ? "Change length and height" : "Add a household object"}</h1></div>
     <form id="object-form" class="panel filters">
-      <p class="muted">Choose the home and the room from the lists. Type the length, height, diameter, mattress depth, curtain rail width and desired curtain length. A negative number cannot be entered.</p>
+      <p class="muted">Choose the home and the room from the lists. Type the length, height, diameter, mattress depth, curtain rail width and desired curtain length. For a bed, pillow sizes are optional: fill up to 4, or leave every pillow field empty. A negative number cannot be entered.</p>
       ${existing ? `<input type="hidden" name="object_id" value="${existing.id}">` : ""}
       ${field("Type", `<select name="kind">${kinds.map(([value, label]) => `<option value="${value}" ${kind === value ? "selected" : ""}>${label}</option>`).join("")}</select>`)}
       ${field("Name", `<input name="name" required value="${esc(existing ? existing.name : "")}">`)}
@@ -661,6 +687,10 @@ async function objectFormView(id) {
       ${field("Height cm", measureInput("height", existing && existing.height))}
       ${field("Diameter cm", measureInput("diameter", existing && existing.diameter))}
       ${field("Mattress depth cm", measureInput("depth", existing && existing.depth))}
+      <div class="bed-pillows" data-bed-pillows ${kind === "bed" ? "" : "hidden"}>
+        <p class="muted">Pillow sizes, optional. Width and length in centimetres. Leave a pillow blank if the bed does not need it.</p>
+        ${pillowFields}
+      </div>
       ${field("Curtain rail width", measureInput("rail_width", attrs.rail_width))}
       ${field("Desired curtain length", measureInput("desired_length", attrs.desired_length))}
       ${field("Fullness ratio", measureInput("fullness", attrs.fullness))}
@@ -1081,7 +1111,9 @@ function bindPage(parts) {
   if (objectForm) {
     bindMeasureFields(objectForm);
     syncObjectPlace();
+    syncObjectKind();
     if (objectForm.elements.home_id) objectForm.elements.home_id.onchange = syncObjectPlace;
+    if (objectForm.elements.kind) objectForm.elements.kind.onchange = syncObjectKind;
     objectForm.onsubmit = saveObject;
   }
   const matchForm = document.getElementById("match-form");
@@ -1278,7 +1310,7 @@ async function saveObject(event) {
   const data = Object.fromEntries(new FormData(event.target).entries());
   const error = document.getElementById("object-error");
   error.hidden = true;
-  const measureKeys = ["width", "length", "height", "diameter", "depth", "rail_width", "desired_length", "fullness", "overhang"];
+  const measureKeys = ["width", "length", "height", "diameter", "depth", "rail_width", "desired_length", "fullness", "overhang", "pillow_1_width", "pillow_1_length", "pillow_2_width", "pillow_2_length", "pillow_3_width", "pillow_3_length", "pillow_4_width", "pillow_4_length"];
   const number = (key) => {
     const raw = String(data[key] ?? "").trim().replace(",", ".");
     if (raw === "") return null;
@@ -1290,6 +1322,14 @@ async function saveObject(event) {
     error.textContent = "Type a measurement of zero or more. A negative number is not saved.";
     return;
   }
+  const pillows = [1, 2, 3, 4].map((n) => {
+    const width = number(`pillow_${n}_width`);
+    const length = number(`pillow_${n}_length`);
+    const pillow = {};
+    if (width != null) pillow.width = width;
+    if (length != null) pillow.length = length;
+    return pillow;
+  });
   const body = {
     kind: data.kind, name: data.name, shape: data.shape || "",
     home_id: data.home_id ? Number(data.home_id) : null,
@@ -1299,6 +1339,7 @@ async function saveObject(event) {
     attributes: {
       rail_width: number("rail_width"), desired_length: number("desired_length"),
       fullness: number("fullness"), attachment: data.attachment || "", overhang: number("overhang"),
+      pillows: data.kind === "bed" ? pillows : [],
     },
   };
   try {

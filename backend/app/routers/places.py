@@ -1,3 +1,4 @@
+import math
 import secrets
 from io import BytesIO
 
@@ -70,6 +71,56 @@ def _reject_negative(payload: ObjectIn) -> None:
             continue
         if number < 0:
             raise HTTPException(status_code=422, detail="Length and height cannot be negative. Enter the measurement.")
+
+
+def _pillow_sizes(raw) -> list[dict]:
+    if raw is None or raw == "" or raw == []:
+        return []
+    if not isinstance(raw, list) or len(raw) > 4:
+        raise HTTPException(status_code=422, detail="A bed can have at most 4 pillow sizes.")
+    cleaned = []
+    for entry in raw:
+        if entry is None or entry == "":
+            continue
+        if not isinstance(entry, dict):
+            raise HTTPException(status_code=422, detail="Each pillow size needs a width and a length, in centimetres.")
+        pillow = {}
+        for key in ("width", "length"):
+            value = entry.get(key)
+            if value is None or value == "":
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail="Pillow width and length must be zero or more.") from None
+            if not math.isfinite(number) or number < 0:
+                raise HTTPException(status_code=422, detail="Pillow width and length must be zero or more.")
+            pillow[key] = number
+        cleaned.append(pillow)
+    while cleaned and not cleaned[-1]:
+        cleaned.pop()
+    return cleaned
+
+
+def _attributes_for_save(payload: ObjectIn, previous: dict | None) -> dict:
+    incoming = dict(payload.attributes or {})
+    has_pillows = "pillows" in incoming
+    incoming.pop("pillows", None)
+    merged = {} if previous is None else dict(previous)
+    for key, value in incoming.items():
+        if value is None or value == "":
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+    if payload.kind != "bed":
+        merged.pop("pillows", None)
+    elif has_pillows:
+        cleaned = _pillow_sizes((payload.attributes or {}).get("pillows"))
+        if cleaned:
+            merged["pillows"] = cleaned
+        else:
+            merged.pop("pillows", None)
+    return merged
 
 
 def _tree(ctx: Context) -> dict:
@@ -457,9 +508,7 @@ def create_object(payload: ObjectIn, ctx: Context = Depends(require_role("editor
     _reject_negative(payload)
     _check_object_place(ctx, payload)
     data = payload.model_dump()
-    data["attributes"] = {
-        key: value for key, value in (data.get("attributes") or {}).items() if value is not None and value != ""
-    }
+    data["attributes"] = _attributes_for_save(payload, None)
     obj = HouseholdObject(family_id=ctx.family.id, **data)
     ctx.db.add(obj)
     add_audit(ctx.db, ctx.family.id, ctx.user.id, "object_created", {"kind": payload.kind, "name": payload.name})
@@ -476,13 +525,8 @@ def update_object(object_id: int, payload: ObjectIn, ctx: Context = Depends(requ
     _check_object_place(ctx, payload)
     obj = _object(ctx, object_id)
     data = payload.model_dump()
-    incoming = data.pop("attributes") or {}
-    merged = dict(obj.attributes or {})
-    for key, value in incoming.items():
-        if value is None or value == "":
-            merged.pop(key, None)
-        else:
-            merged[key] = value
+    data.pop("attributes")
+    merged = _attributes_for_save(payload, obj.attributes)
     for key, value in data.items():
         setattr(obj, key, value)
     obj.attributes = merged
