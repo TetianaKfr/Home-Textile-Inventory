@@ -9,7 +9,7 @@
 
 Source: `Home Textile Inventory SRS.pdf`
 
-The rules below follow the current application. Search and filters live on the inventory. Each physical unit keeps its own place. A room or storage location that still holds items cannot be deleted. A negative measurement is never treated as a size. Each home can have one photograph. A bed can record up to four pillow sizes. Beds, tables, and windows are listed by home, then by room, then by name.
+The rules below follow the current application. Search and filters live on the inventory. Each physical unit keeps its own place. A room or storage location that still holds items cannot be deleted. A negative measurement is never treated as a size. Each home can have one photograph. A bed can record up to four pillow sizes. Beds, tables, and windows are listed by home, then by room, then by name. An editor can change a quantity from 1 to 200 and can archive an item from the list. Filters choose a category group, then a subcategory. Matching can be limited to one home, and a bed’s pillowcases must be an exact fit for the pillow sizes stored on that bed.
 
 ## 1. Project Overview
 
@@ -744,6 +744,8 @@ For example:
 
 The application must not assign one shared location or status to multiple physical units when their actual locations or statuses differ.
 
+An editor can set the quantity from 1 to 200. Raising it adds physical units. Those new units copy the status of the oldest active unit, and they use the location shown for that unit. Lowering the quantity archives the newest extra units. It does not erase their history. The change is recorded, and the other members of the family are told the new quantity.
+
 Individual units should also be able to have their own photographs and attributes where necessary.
 
 ## 10. Item Status and History
@@ -790,7 +792,9 @@ Search and the combined filters are part of the inventory catalogue. There is no
 
 ### 11.1. Search Criteria
 
-The inventory filters are free text, size, house, category, color, material, pattern, status, and seasonality. Results can be sorted by name, category, width, date added, or location.
+The inventory filters are free text, size, house, category group, subcategory, color, material, pattern, status, and seasonality. Results can be sorted by name, category, width, date added, or location.
+
+Category is the group, such as bedding or bathroom textiles. Subcategory is the specific category inside that group. Choosing a group limits the subcategory list to that group. Leaving the group empty searches every category. Leaving the subcategory empty searches every subcategory in the chosen group.
 
 Users must be able to search by:
 
@@ -911,13 +915,17 @@ A user selects a bed with:
 The user has:
 
 - One duvet: 220 × 200 cm.
-- Two pillows: 60 × 60 cm.
+- Two pillow sizes on the bed: 60 × 60 cm.
 
 The application should search for:
 
 - Compatible sheets for the mattress.
 - A compatible duvet cover for the duvet.
-- Two compatible pillowcases.
+- One exact pillowcase for each pillow size stored on the bed.
+
+The user can run this search across all homes or limit it to one home. Only physical units stored in the chosen home are used. A unit of the same item stored in another home is ignored, and an item with no unit in that home is left out. The result states which home the textiles were taken from. An unknown home is rejected.
+
+A mattress has no pillow sizes, so it does not ask for pillowcases.
 
 The system should present complete possible combinations.
 
@@ -977,6 +985,8 @@ The application must compare:
 - Pillowcase length.
 
 The system should distinguish between exact matches and acceptable manufacturer-recommended allowances.
+
+When the pillow sizes come from a bed, only an exact size is assigned. An acceptable or possible allowance is not used for that assignment. Each usable physical unit covers one bed pillow. Archived and damaged units are not used. A pillow size is used only when both width and length are present. Missing pillows of the same size are counted together, with that required size. A pillowcase that fits none of the bed’s pillow sizes is shown as incompatible. Pillow protectors follow the same size rule, and a missing protector is reported as optional. The explanation names the bed pillow number and its size.
 
 ### 12.7. Table and Tablecloth Compatibility
 
@@ -1087,7 +1097,7 @@ For example:
 - Compatible pillows found.
 - No suitable pillowcases found.
 
-The application should display the missing category and the required dimensions.
+The application should display the missing category, how many pieces are still missing, and the required dimensions. Pillowcases missing for the same bed pillow size are counted on one line. A missing pillow protector is marked optional.
 
 ### 12.11. Measurements and place checks
 
@@ -1134,9 +1144,11 @@ The application must support two methods of adding inventory.
 
 ### 14.1. Manual Entry
 
-The user selects a category and fills in the relevant fields.
+The user selects a category group, then a subcategory inside that group, and fills in the relevant fields. Changing the group limits the subcategory list to that group.
 
-The form must display only the attributes relevant to the selected category.
+The form must display only the attributes relevant to the selected subcategory.
+
+Quantity is required and must be from 1 to 200.
 
 The user can add photographs and specify one storage location for the units created with the item. That location may be left empty.
 
@@ -1161,6 +1173,10 @@ The user reviews the suggestions, corrects them, enters missing details, and sav
 Users with sufficient permissions must be able to edit item details, including the storage location of each physical unit.
 
 An item with one unit shows one location field. An item with several units shows one location field per unit.
+
+The same form can change the quantity. New units are added when the quantity rises. The newest extra units are archived when it falls.
+
+An editor can delete an item from the inventory list and from the item detail. The application asks for confirmation. Delete archives the item and keeps its history. After a delete from the detail, the inventory is shown.
 
 Editing should not overwrite historical information without retaining an audit record.
 
@@ -1410,6 +1426,8 @@ Inventory cards should display:
 - Status.
 - Storage location, shown as home / room / location name when those facts exist.
 
+An editor can delete the item from the card. Deleting asks for confirmation and archives the item.
+
 ### 20.2. Item Details
 
 An item detail screen should display all available information, including:
@@ -1428,12 +1446,13 @@ An item detail screen should display all available information, including:
 The matching interface should allow the user to:
 
 1. Select a bed, mattress, pillow, table, or window.
-2. View compatible inventory items.
-3. Compare suggested combinations.
-4. Review technical compatibility.
-5. Review visual compatibility.
-6. See missing items.
-7. Save a preferred combination.
+2. Choose all homes or one home. The result states where the textiles were taken from.
+3. View compatible inventory items.
+4. Compare suggested combinations.
+5. Review technical compatibility.
+6. Review visual compatibility.
+7. See missing items.
+8. Save a preferred combination.
 
 The user must always be able to understand why a combination was recommended.
 
@@ -1504,6 +1523,8 @@ The initial application should not be considered complete until the following re
 - Items can be assigned to specific homes and storage locations.
 - Individual physical units can have separate locations and statuses.
 - Editing an item can change the location of each physical unit.
+- An editor can change the quantity from 1 to 200. New units are added, and extra units are archived.
+- An editor can archive an item from the list or from its detail, after confirmation.
 - A room or storage location that still contains items cannot be deleted.
 
 ### 22.2. Multi-User Access
@@ -1515,7 +1536,7 @@ The initial application should not be considered complete until the following re
 
 ### 22.3. Search
 
-- Users can search by category, dimensions, color, material, status, and location from the inventory.
+- Users can search by category group, subcategory, dimensions, color, material, status, and location from the inventory.
 - Multiple filters can be applied together, including house and a size such as 220 × 200.
 - A size matches either orientation, within 1 cm on each side.
 - An unreadable size is rejected and is not applied.
@@ -1533,7 +1554,8 @@ The initial application should not be considered complete until the following re
 
 - The system can identify compatible bedding for a selected bed or mattress.
 - The system can match duvets with duvet covers.
-- The system can match pillows with pillowcases and protectors.
+- The system can match a bed’s pillow sizes with exact pillowcases and optional pillow protectors, one usable unit per pillow.
+- Matching can be limited to the textiles stored in one home.
 - The system can match tables with tablecloths using shape and overhang.
 - The system can match windows with curtains using curtain rail width, curtain length, fullness ratio, and attachment type.
 - Technical compatibility is displayed separately from visual compatibility.

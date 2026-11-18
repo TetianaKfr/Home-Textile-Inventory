@@ -295,6 +295,30 @@ function cards(items) {
   }).join("")}</div>`;
 }
 
+function groupName(category) {
+  return (category.group_name || "Other").trim() || "Other";
+}
+
+function categoryGroups(categories) {
+  const groups = [];
+  for (const category of categories) {
+    const name = groupName(category);
+    if (!groups.includes(name)) groups.push(name);
+  }
+  return groups;
+}
+
+function categoriesInGroup(categories, group) {
+  if (!group) return [];
+  return categories.filter((category) => groupName(category) === group);
+}
+
+function categorySelectHtml(categories, selectedId, blankLabel) {
+  const selected = selectedId == null ? "" : String(selectedId);
+  const blank = blankLabel == null ? "" : `<option value="">${esc(blankLabel)}</option>`;
+  return blank + categories.map((category) => `<option value="${category.id}" ${selected === String(category.id) ? "selected" : ""}>${esc(category.name)}</option>`).join("");
+}
+
 function parseSize(text) {
   const match = String(text || "").trim().match(/^(\d+(?:[.,]\d+)?)\s*(?:x|×|\/|by|на)\s*(\d+(?:[.,]\d+)?)$/i);
   if (!match) return null;
@@ -313,7 +337,7 @@ async function inventoryView() {
     ? "Could not read that size. Use width × length, for example 220 × 200."
     : "";
   const query = new URLSearchParams();
-  ["q", "category_id", "color", "material", "pattern", "status", "seasonality", "sort", "size", "home_id"].forEach((key) => {
+  ["q", "category_id", "group", "color", "material", "pattern", "status", "seasonality", "sort", "size", "home_id"].forEach((key) => {
     if (params.get(key)) query.set(key, params.get(key));
   });
   if (sizeError) query.delete("size");
@@ -326,12 +350,16 @@ async function inventoryView() {
     else throw error;
   }
   const options = (list) => list.map((value) => `<option value="${esc(value)}">${esc(value)}</option>`).join("");
+  const selectedCategory = categories.find((category) => String(category.id) === String(params.get("category_id") || ""));
+  const selectedGroup = selectedCategory ? groupName(selectedCategory) : (params.get("group") || "");
+  window.__filterCategories = categories;
   return `<div class="top"><h1>Inventory</h1>${canEdit() ? `<a class="btn" href="#/items/new">Add item</a>` : ""}</div>
     <form id="filters" class="filters">
       ${field("Search", `<input name="q" value="${esc(params.get("q") || "")}" placeholder="white pillowcase, box 4, cotton">`)}
       ${field("Size", `<input name="size" value="${esc(sizeText)}" placeholder="220 × 200" inputmode="decimal">`)}
       ${field("House", `<select name="home_id"><option value="">Any</option>${homes.map((home) => `<option value="${home.id}" ${params.get("home_id") == home.id ? "selected" : ""}>${esc(home.name)}</option>`).join("")}</select>`)}
-      ${field("Category", `<select name="category_id"><option value="">Any</option>${categories.map((c) => `<option value="${c.id}" ${params.get("category_id") == c.id ? "selected" : ""}>${esc(c.group_name)} — ${esc(c.name)}</option>`).join("")}</select>`)}
+      ${field("Category", `<select name="group" id="filter-group"><option value="">Any</option>${categoryGroups(categories).map((name) => `<option value="${esc(name)}" ${selectedGroup === name ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>`)}
+      ${field("Subcategory", `<select name="category_id" id="filter-category">${categorySelectHtml(categoriesInGroup(categories, selectedGroup), params.get("category_id") || "", "Any")}</select>`)}
       ${field("Color", `<input name="color" list="colors" value="${esc(params.get("color") || "")}">`)}
       ${field("Material", `<input name="material" list="materials" value="${esc(params.get("material") || "")}">`)}
       ${field("Pattern", `<input name="pattern" list="patterns" value="${esc(params.get("pattern") || "")}">`)}
@@ -390,6 +418,11 @@ async function itemFormView(id) {
   ]);
   const locations = flattenLocations(tree);
   const selected = existing ? existing.category.id : "";
+  const selectedCategory = categories.find((category) => String(category.id) === String(selected));
+  const groups = categoryGroups(categories);
+  const selectedGroup = selectedCategory ? groupName(selectedCategory) : (groups[0] || "");
+  const inGroup = categoriesInGroup(categories, selectedGroup);
+  const selectedSub = selectedCategory ? selectedCategory.id : (inGroup[0] ? inGroup[0].id : "");
   window.__formCache = { categories, locations, existing };
   return `<div class="top"><h1>${existing ? "Edit item" : "Add item"}</h1></div>
     <form id="item-form" class="panel filters">
@@ -397,7 +430,8 @@ async function itemFormView(id) {
         ${field("Photograph for suggestions", `<input id="ai-file" type="file" accept="image/*">`)}
         <button class="btn secondary" id="ai-btn" type="button">Suggest from photograph</button>
         <p id="ai-note" class="small"></p>` : ""}
-      ${field("Category", `<select name="category_id" id="category" required>${categories.map((c) => `<option value="${c.id}" ${String(selected) === String(c.id) ? "selected" : ""}>${esc(c.group_name)} — ${esc(c.name)}</option>`).join("")}</select>`)}
+      ${field("Category", `<select id="category-group" required>${groups.map((name) => `<option value="${esc(name)}" ${selectedGroup === name ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>`)}
+      ${field("Subcategory", `<select name="category_id" id="category" required>${categorySelectHtml(inGroup, selectedSub)}</select>`)}
       ${field("Name", `<input name="name" required value="${esc(existing ? existing.name : "")}">`)}
       ${locationFields(existing)}
       ${field("Dimensions", `<input name="dimension_text" placeholder="140 × 190" value="${existing && existing.width && existing.length ? `${existing.width} x ${existing.length}` : ""}">`)}
@@ -1021,6 +1055,13 @@ async function renderAccept(token) {
 function bindPage(parts) {
   const filters = document.getElementById("filters");
   if (filters && parts[0] !== "item-form") {
+    const filterGroup = document.getElementById("filter-group");
+    const filterCategory = document.getElementById("filter-category");
+    if (filterGroup && filterCategory) {
+      filterGroup.onchange = () => {
+        filterCategory.innerHTML = categorySelectHtml(categoriesInGroup(window.__filterCategories || [], filterGroup.value), "", "Any");
+      };
+    }
     filters.onsubmit = (event) => {
       event.preventDefault();
       const data = Object.fromEntries(new FormData(filters).entries());
@@ -1030,9 +1071,21 @@ function bindPage(parts) {
     };
   }
   const category = document.getElementById("category");
+  const categoryGroup = document.getElementById("category-group");
   if (category) {
-    renderExtraFields();
+    const syncCategory = () => {
+      if (categoryGroup && window.__formCache) {
+        const previous = category.value;
+        category.innerHTML = categorySelectHtml(categoriesInGroup(window.__formCache.categories, categoryGroup.value), previous);
+        if (![...category.options].some((option) => option.value === previous) && category.options[0]) {
+          category.value = category.options[0].value;
+        }
+      }
+      renderExtraFields();
+    };
+    syncCategory();
     category.onchange = renderExtraFields;
+    if (categoryGroup) categoryGroup.onchange = syncCategory;
   }
   const ai = document.getElementById("ai-btn");
   if (ai) ai.onclick = suggestAi;

@@ -284,6 +284,7 @@ def list_items(
     ctx: Context = Depends(get_context),
     q: str = "",
     category_id: int | None = None,
+    group: str = "",
     color: str = "",
     material: str = "",
     pattern: str = "",
@@ -327,6 +328,8 @@ def list_items(
 
     def keep(item: Item) -> bool:
         if category_id and item.category_id != category_id:
+            return False
+        if group and (item.category is None or (item.category.group_name or "") != group):
             return False
         if color and color.lower() not in (item.primary_color or "").lower() and color.lower() not in " ".join(item.secondary_colors or []).lower():
             return False
