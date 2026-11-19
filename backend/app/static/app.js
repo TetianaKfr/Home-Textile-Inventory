@@ -337,7 +337,7 @@ async function inventoryView() {
     ? "Could not read that size. Use width × length, for example 220 × 200."
     : "";
   const query = new URLSearchParams();
-  ["q", "category_id", "group", "color", "material", "pattern", "status", "seasonality", "sort", "size", "home_id"].forEach((key) => {
+  ["q", "category_id", "group", "color", "material", "pattern", "status", "seasonality", "sort", "size", "home_id", "room_id", "location_id"].forEach((key) => {
     if (params.get(key)) query.set(key, params.get(key));
   });
   if (sizeError) query.delete("size");
@@ -352,12 +352,19 @@ async function inventoryView() {
   const options = (list) => list.map((value) => `<option value="${esc(value)}">${esc(value)}</option>`).join("");
   const selectedCategory = categories.find((category) => String(category.id) === String(params.get("category_id") || ""));
   const selectedGroup = selectedCategory ? groupName(selectedCategory) : (params.get("group") || "");
+  const homeId = params.get("home_id") || "";
+  const roomId = params.get("room_id") || "";
+  const locationId = params.get("location_id") || "";
   window.__filterCategories = categories;
+  window.__inventoryHomes = homes;
+  const placeOption = (choice, selected) => `<option value="${choice.id}" ${String(choice.id) === String(selected) ? "selected" : ""}>${esc(choice.label)}</option>`;
   return `<div class="top"><h1>Inventory</h1>${canEdit() ? `<a class="btn" href="#/items/new">Add item</a>` : ""}</div>
     <form id="filters" class="filters">
       ${field("Search", `<input name="q" value="${esc(params.get("q") || "")}" placeholder="white pillowcase, box 4, cotton">`)}
       ${field("Size", `<input name="size" value="${esc(sizeText)}" placeholder="220 × 200" inputmode="decimal">`)}
-      ${field("House", `<select name="home_id"><option value="">Any</option>${homes.map((home) => `<option value="${home.id}" ${params.get("home_id") == home.id ? "selected" : ""}>${esc(home.name)}</option>`).join("")}</select>`)}
+      ${field("House", `<select name="home_id"><option value="">Any</option>${homes.map((home) => `<option value="${home.id}" ${String(home.id) === String(homeId) ? "selected" : ""}>${esc(home.name)}</option>`).join("")}</select>`)}
+      ${field("Room", `<select name="room_id"><option value="">Any</option>${roomChoices(homes, homeId).map((room) => placeOption(room, roomId)).join("")}</select>`)}
+      ${field("Storage", `<select name="location_id"><option value="">Any</option>${storageChoices(homes, homeId, roomId).map((place) => placeOption(place, locationId)).join("")}</select>`)}
       ${field("Category", `<select name="group" id="filter-group"><option value="">Any</option>${categoryGroups(categories).map((name) => `<option value="${esc(name)}" ${selectedGroup === name ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>`)}
       ${field("Subcategory", `<select name="category_id" id="filter-category">${categorySelectHtml(categoriesInGroup(categories, selectedGroup), params.get("category_id") || "", "Any")}</select>`)}
       ${field("Color", `<input name="color" list="colors" value="${esc(params.get("color") || "")}">`)}
@@ -442,7 +449,7 @@ async function itemFormView(id) {
       ${field("Material", `<input name="material" list="materials" value="${esc(existing ? existing.material : "")}">`)}
       ${field("Texture", `<input name="texture" value="${esc(existing ? existing.texture : "")}">`)}
       ${field("Brand", `<input name="brand" value="${esc(existing ? existing.brand : "")}">`)}
-      ${field("Season", `<input name="seasonality" list="seasons" value="${esc(existing ? existing.seasonality : "")}">`)}
+      ${field("Season", `<input name="seasonality" list="seasons" value="${esc(seasonValue(existing))}">`)}
       ${field("Description", `<textarea name="description">${esc(existing ? existing.description : "")}</textarea>`)}
       ${field("Notes", `<textarea name="notes">${esc(existing ? existing.notes : "")}</textarea>`)}
       ${field("Quantity", `<input name="quantity" type="number" min="1" max="200" step="1" required value="${existing ? existing.quantity : 1}">`)}
@@ -489,6 +496,18 @@ function flattenLocations(tree) {
   return options;
 }
 
+function seasonValue(existing) {
+  if (!existing) return "";
+  if (existing.seasonality) return existing.seasonality;
+  const season = existing.attributes && existing.attributes.season;
+  return season || "";
+}
+
+function duplicatesSeason(spec) {
+  const label = String(spec.label || "").trim().toLowerCase();
+  return spec.key === "season" || spec.key === "seasonality" || label === "season";
+}
+
 function renderExtraFields() {
   const cache = window.__formCache;
   if (!cache) return;
@@ -500,7 +519,7 @@ function renderExtraFields() {
   const existing = cache.existing;
   const dims = (schema.dimensions || []).filter((key) => !["width", "length"].includes(key));
   const dimensionInputs = dims.map((key) => field(key.replaceAll("_", " "), `<input name="dim_${key}" type="number" step="0.1" value="${esc(existing && existing[key] != null ? existing[key] : (existing && existing.attributes[key] != null ? existing.attributes[key] : ""))}">`));
-  const extras = (schema.fields || []).map((spec) => {
+  const extras = (schema.fields || []).filter((spec) => !duplicatesSeason(spec)).map((spec) => {
     const value = existing && existing.attributes ? existing.attributes[spec.key] || "" : "";
     if (spec.type === "select") {
       return field(spec.label, `<input name="attr_${spec.key}" list="list-${spec.key}" value="${esc(value)}"><datalist id="list-${spec.key}">${(spec.options || []).map((opt) => `<option value="${esc(opt)}">`).join("")}</datalist>`);
@@ -519,6 +538,11 @@ function collectItem(form, acknowledge) {
       if (data[key] !== "") attributes[key.replace(/^attr_|^dim_/, "")] = data[key].match(/^-?\d+(\.\d+)?$/) ? Number(data[key]) : data[key];
     }
   });
+  const category = (window.__formCache.categories || []).find((item) => String(item.id) === String(data.category_id));
+  const schemaFields = (category && category.attribute_schema && category.attribute_schema.fields) || [];
+  if (schemaFields.some((spec) => spec.key === "season")) {
+    if (data.seasonality) attributes.season = data.seasonality;
+  }
   const sources = window.__sources || (window.__formCache.existing && window.__formCache.existing.field_sources) || {};
   ["primary_color", "pattern", "material", "texture"].forEach((key) => {
     const original = window.__formCache.existing ? window.__formCache.existing[key] : "";
@@ -1052,6 +1076,51 @@ async function renderAccept(token) {
   }
 }
 
+function roomChoices(homes, homeId) {
+  const choices = [];
+  for (const home of homes || []) {
+    if (homeId && String(home.id) !== String(homeId)) continue;
+    for (const room of home.rooms || []) {
+      choices.push({ id: room.id, label: homeId ? room.name : `${home.name} / ${room.name}` });
+    }
+  }
+  return choices.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true }));
+}
+
+function storageChoices(homes, homeId, roomId) {
+  const choices = [];
+  const walk = (nodes, prefix) => {
+    for (const node of nodes || []) {
+      const label = prefix ? `${prefix} / ${node.name}` : node.name;
+      choices.push({ id: node.id, label });
+      walk(node.children, label);
+    }
+  };
+  for (const home of homes || []) {
+    if (homeId && String(home.id) !== String(homeId)) continue;
+    for (const room of home.rooms || []) {
+      if (roomId && String(room.id) !== String(roomId)) continue;
+      const prefix = roomId ? "" : (homeId ? room.name : `${home.name} / ${room.name}`);
+      walk(room.locations, prefix);
+    }
+  }
+  return choices.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true }));
+}
+
+function fillFilterSelect(select, choices) {
+  const current = select.value;
+  select.innerHTML = `<option value="">Any</option>${choices.map((choice) => `<option value="${choice.id}">${esc(choice.label)}</option>`).join("")}`;
+  select.value = [...select.options].some((option) => option.value === current) ? current : "";
+}
+
+function syncInventoryPlace() {
+  const form = document.getElementById("filters");
+  const homes = window.__inventoryHomes || [];
+  if (!form || !form.elements.home_id || !form.elements.room_id || !form.elements.location_id) return;
+  fillFilterSelect(form.elements.room_id, roomChoices(homes, form.elements.home_id.value));
+  fillFilterSelect(form.elements.location_id, storageChoices(homes, form.elements.home_id.value, form.elements.room_id.value));
+}
+
 function bindPage(parts) {
   const filters = document.getElementById("filters");
   if (filters && parts[0] !== "item-form") {
@@ -1062,6 +1131,8 @@ function bindPage(parts) {
         filterCategory.innerHTML = categorySelectHtml(categoriesInGroup(window.__filterCategories || [], filterGroup.value), "", "Any");
       };
     }
+    if (filters.elements.home_id) filters.elements.home_id.onchange = syncInventoryPlace;
+    if (filters.elements.room_id) filters.elements.room_id.onchange = syncInventoryPlace;
     filters.onsubmit = (event) => {
       event.preventDefault();
       const data = Object.fromEntries(new FormData(filters).entries());

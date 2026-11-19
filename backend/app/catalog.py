@@ -72,10 +72,10 @@ def system_categories() -> list[dict]:
     other = "Other household textiles"
     return [
         category("bed-sheet", "Bed sheets", bedding, "textile", ["width", "length"], [
-            _sel("sheet_type", "Sheet type", ["flat"]),
+            _sel("sheet_type", "Sheet type", ["flat", "fitted", "top"]),
         ]),
         category("fitted-sheet", "Fitted sheets", bedding, "textile", ["width", "length"], [
-            _sel("sheet_type", "Sheet type", ["fitted"]),
+            _sel("sheet_type", "Sheet type", ["flat", "fitted", "top"]),
             _text("elastic", "Fitted sheet elastic configuration"),
             _num("mattress_depth", "Mattress depth compatibility"),
         ]),
@@ -95,6 +95,10 @@ def system_categories() -> list[dict]:
             _sel("waterproof", "Waterproof", ["yes", "no", "unknown"]),
         ]),
         category("blanket", "Blankets", bedding, "textile", ["width", "length"], [
+            _num("thickness", "Thickness"),
+            _text("filling", "Filling, if applicable"),
+        ]),
+        category("throw", "Throws", bedding, "textile", ["width", "length"], [
             _num("thickness", "Thickness"),
             _text("filling", "Filling, if applicable"),
         ]),

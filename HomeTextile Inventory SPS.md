@@ -9,7 +9,7 @@
 
 Source: `Home Textile Inventory SRS.pdf`
 
-The rules below follow the current application. Search and filters live on the inventory. Each physical unit keeps its own place. A room or storage location that still holds items cannot be deleted. A negative measurement is never treated as a size. Each home can have one photograph. A bed can record up to four pillow sizes. Beds, tables, and windows are listed by home, then by room, then by name. An editor can change a quantity from 1 to 200 and can archive an item from the list. Filters choose a category group, then a subcategory. Matching can be limited to one home, and a bed’s pillowcases must be an exact fit for the pillow sizes stored on that bed.
+The rules below follow the current application. Search and filters live on the inventory. Each physical unit keeps its own place. A room or storage location that still holds items cannot be deleted. A negative measurement is never treated as a size. Each home can have one photograph. A bed can record up to four pillow sizes. Beds, tables, and windows are listed by home, then by room, then by name. An editor can change a quantity from 1 to 200 and can archive an item from the list. Filters choose a category group, then a subcategory, and can continue from house to room to storage. Matching can be limited to one home, and a bed’s pillowcases must be an exact fit for the pillow sizes stored on that bed. Bed sheets and fitted sheets share the types flat, fitted, and top. Throws are a bedding category. Season is entered once.
 
 ## 1. Project Overview
 
@@ -142,6 +142,7 @@ The application must support the following initial categories.
 - Pillow protectors
 - Mattress protectors
 - Blankets
+- Throws
 - Duvets
 - Pillows
 - Bedspreads
@@ -222,6 +223,8 @@ Each item record should support:
 Not every field must be mandatory.
 
 The available fields must depend on the selected category.
+
+Season is one field on the item form. A category field whose key is season or seasonality, or whose label is Season, is not shown again. If the item has no season but a stored season attribute, that value fills the Season field. When the category defines a season attribute, the Season value is also saved there.
 
 ### 5.2. Dimensions
 
@@ -311,7 +314,7 @@ Required or optional fields:
 
 - Width.
 - Length.
-- Sheet type: flat or fitted.
+- Sheet type: flat, fitted, or top. Bed sheets and fitted sheets offer the same three types.
 - Fitted sheet elastic configuration.
 - Mattress depth compatibility.
 - Color.
@@ -377,6 +380,8 @@ Fields:
 - Weight, if known.
 - Color.
 - Brand.
+
+Season is the single Season field described in section 5.1. It is also stored on the duvet’s season attribute.
 
 Seasonal options:
 
@@ -466,7 +471,9 @@ Shapes:
 - Oval.
 - Custom.
 
-### 6.10. Blankets and Bedspreads
+### 6.10. Blankets, Throws, and Bedspreads
+
+Throws use the same measurements as blankets: width, length, thickness, and filling when it applies.
 
 Fields:
 
@@ -792,7 +799,11 @@ Search and the combined filters are part of the inventory catalogue. There is no
 
 ### 11.1. Search Criteria
 
-The inventory filters are free text, size, house, category group, subcategory, color, material, pattern, status, and seasonality. Results can be sorted by name, category, width, date added, or location.
+The inventory filters are free text, size, house, room, storage, category group, subcategory, color, material, pattern, status, and seasonality. Results can be sorted by name, category, width, date added, or location.
+
+House, room, and storage narrow one another. Choosing a house limits the rooms to that house. Choosing a room limits storage to that room, including nested shelves, drawers, and boxes. With no house selected, each room is labeled home / room. With no room selected, each storage place keeps the home and room in its label. Changing the house or the room refreshes the next lists and clears a choice that no longer belongs there. The lists are ordered by label, ignoring letter case and comparing numbers as numbers.
+
+An item matches a room when one of its units is stored in that room. An item matches a storage place when one of its units is in that place or in a nested place under it.
 
 Category is the group, such as bedding or bathroom textiles. Subcategory is the specific category inside that group. Choosing a group limits the subcategory list to that group. Leaving the group empty searches every category. Leaving the subcategory empty searches every subcategory in the chosen group.
 
@@ -1518,6 +1529,9 @@ The initial application should not be considered complete until the following re
 
 - Users can create, edit, and view inventory items.
 - Each category displays the appropriate fields.
+- Bed sheets and fitted sheets can be flat, fitted, or top.
+- Throws can be recorded with the same measurements as blankets.
+- Season is entered once, even when the category also has a season attribute.
 - Users can attach multiple photographs.
 - Dimensions are stored consistently in centimeters.
 - Items can be assigned to specific homes and storage locations.
@@ -1537,6 +1551,7 @@ The initial application should not be considered complete until the following re
 ### 22.3. Search
 
 - Users can search by category group, subcategory, dimensions, color, material, status, and location from the inventory.
+- House, room, and storage filters narrow one another. A storage filter includes items in nested places.
 - Multiple filters can be applied together, including house and a size such as 220 × 200.
 - A size matches either orientation, within 1 cm on each side.
 - An unreadable size is rejected and is not applied.

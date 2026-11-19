@@ -26,11 +26,40 @@ from app.services.images import save_photo
 DEMO_PASSWORD = "Demo1234!"
 
 
+SHEET_TYPE_OPTIONS = ["flat", "fitted", "top"]
+
+
+def _sync_sheet_types(db) -> None:
+    rows = db.scalars(
+        select(Category).where(Category.family_id.is_(None), Category.slug.in_(("bed-sheet", "fitted-sheet")))
+    ).all()
+    changed = False
+    for row in rows:
+        schema = dict(row.attribute_schema or {})
+        fields = []
+        updated = False
+        for field in schema.get("fields") or []:
+            field = dict(field)
+            if field.get("key") == "sheet_type" and list(field.get("options") or []) != SHEET_TYPE_OPTIONS:
+                field["options"] = list(SHEET_TYPE_OPTIONS)
+                updated = True
+            fields.append(field)
+        if updated:
+            schema["fields"] = fields
+            row.attribute_schema = schema
+            changed = True
+    if changed:
+        db.commit()
+
+
 def seed(db) -> None:
-    if not db.scalar(select(Category).where(Category.family_id.is_(None)).limit(1)):
-        for spec in system_categories():
+    existing_slugs = set(db.scalars(select(Category.slug).where(Category.family_id.is_(None))))
+    missing = [spec for spec in system_categories() if spec["slug"] not in existing_slugs]
+    if missing:
+        for spec in missing:
             db.add(Category(family_id=None, **spec))
         db.commit()
+    _sync_sheet_types(db)
     if not get_settings().seed_demo:
         return
     if db.scalar(select(User).where(User.email == "demo@home-textile.local")):
